@@ -1,0 +1,3 @@
+-- Legacy PostgreSQL schema bootstrap retained for reference during the
+-- Postgres-to-SQLite cutover. Runtime schema initialization now lives in
+-- libs/db/bootstrap.py and does not execute this file.

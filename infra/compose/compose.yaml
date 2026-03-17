@@ -1,0 +1,23 @@
+# Legacy Postgres compose file retained during the SQLite cutover.
+# Normal local setup no longer depends on Docker or this file.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: life-system-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: life
+      POSTGRES_PASSWORD: life
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U life -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

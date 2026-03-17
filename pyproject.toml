@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "life-system"
+version = "0.1.0"
+description = "Prefect-first local research automation orchestration system."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite>=0.20,<1.0",
+  "fastapi>=0.115,<1.0",
+  "httpx>=0.27,<1.0",
+  "prefect>=3.0,<4.0",
+  "pydantic>=2.8,<3.0",
+  "pydantic-settings>=2.4,<3.0",
+  "sqlalchemy>=2.0,<3.0",
+  "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0,<9.0",
+]
+migration = [
+  "psycopg[binary]>=3.1,<4.0",
+]
+
+[project.scripts]
+life-api = "apps.api.main:run"
+life-tui = "apps.tui.main:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["apps*", "workers*", "libs*", "flows*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
