@@ -61,6 +61,21 @@ scripts/setup_local_stack.sh
 
 This recreates Prefect work pools and deployments against `data/runtime/prefect.db`.
 
+## Standardized Output Folders (Cutover-Time Check)
+
+After cutover, worker artifacts should no longer be written to repository root.
+
+Runbook checks:
+
+1. Confirm `worker_settings.artifact_root` points to `data/runtime/artifacts`.
+2. Ensure smoke-run outputs are under run directories matching:
+   - `data/runtime/artifacts/<worker_key>/<timestamp>-<short-id>/...`
+3. Confirm no new run artifacts are created at repository root during worker execution.
+
+This aligns with the taxonomy/report persistence contract used by the frontend:
+- reports should link to source artifacts via `source_artifact_id`,
+- taxonomy labels should be visible as `filter_keys`/`tag_keys` in `/reports`.
+
 ## Validation
 
 After startup:
@@ -68,8 +83,12 @@ After startup:
 1. Confirm Prefect UI is available.
 2. Run a smoke `daily-brief` and `paper-review`.
 3. Verify `/commands/query-knowledge` returns chunk hits from migrated content.
-4. Compare SQLite row counts with the pre-cutover Postgres snapshot.
-5. Check `data/runtime/*.log` for startup or worker errors.
+4. Verify report payloads:
+   - `/reports` returns expected `filter_keys` and `tag_keys`.
+   - reports include non-null `source_artifact_id` when a source file was produced.
+5. Compare SQLite row counts with the pre-cutover Postgres snapshot.
+6. Review the worker artifact directories for the expected `run_key`/`timestamp` folder naming.
+7. Check `data/runtime/*.log` for startup or worker errors.
 
 ## Rollback
 

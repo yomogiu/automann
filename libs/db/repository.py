@@ -4,13 +4,26 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from pathlib import Path
 
-from sqlalchemy import Select, desc, select, text
+from sqlalchemy import Select, delete, desc, select, text
 from sqlalchemy.engine import Engine
 
 from libs.contracts.models import SCHEMA_VERSION, AdapterResult, ArtifactRecord, ObservationRecord, ReportRecord
+from libs.report_taxonomy import FILTER_KIND, TAG_KIND, classify_report_taxonomy, taxonomy_payload
 
-from .models import Artifact, Chunk, Entity, Interaction, Observation, Report, RunRecord, TaskSpec
+from .models import (
+    Artifact,
+    Chunk,
+    Entity,
+    Interaction,
+    Observation,
+    Report,
+    ReportTaxonomyLink,
+    ReportTaxonomyTerm,
+    RunRecord,
+    TaskSpec,
+)
 from .session import session_scope
 
 
@@ -19,6 +32,12 @@ class PersistedAdapterResult:
     run: RunRecord
     artifacts: list[Artifact]
     reports: list[Report]
+
+
+@dataclass(slots=True)
+class ReportTaxonomySnapshot:
+    filter_keys: list[str]
+    tag_keys: list[str]
 
 
 _FTS_TOKEN_RE = re.compile(r"\w+")
@@ -56,6 +75,33 @@ class LifeRepository:
         with session_scope(self.engine) as session:
             return session.get(RunRecord, run_id)
 
+    def get_report(self, report_id: str) -> Report | None:
+        with session_scope(self.engine) as session:
+            return session.get(Report, report_id)
+
+    def update_report_metadata(
+        self,
+        report_id: str,
+        *,
+        metadata: dict[str, Any],
+    ) -> Report | None:
+        with session_scope(self.engine) as session:
+            record = session.get(Report, report_id)
+            if record is None:
+                return None
+            record.metadata_json = metadata
+            session.flush()
+            session.refresh(record)
+            return record
+
+    def get_artifact(self, artifact_id: str) -> Artifact | None:
+        with session_scope(self.engine) as session:
+            return session.get(Artifact, artifact_id)
+
+    def get_interaction(self, interaction_id: str) -> Interaction | None:
+        with session_scope(self.engine) as session:
+            return session.get(Interaction, interaction_id)
+
     def find_run_by_idempotency(
         self,
         *,
@@ -86,6 +132,68 @@ class LifeRepository:
         with session_scope(self.engine) as session:
             stmt: Select[tuple[Report]] = select(Report).order_by(desc(Report.created_at)).limit(limit)
             return list(session.scalars(stmt))
+
+    def list_report_taxonomy(self) -> dict[str, list[dict[str, Any]]]:
+        with session_scope(self.engine) as session:
+            rows = list(
+                session.scalars(
+                    select(ReportTaxonomyTerm)
+                    .where(ReportTaxonomyTerm.active.is_(True))
+                    .order_by(ReportTaxonomyTerm.sort_order, ReportTaxonomyTerm.key)
+                )
+            )
+        if not rows:
+            return taxonomy_payload()
+
+        filters: list[dict[str, Any]] = []
+        tags: list[dict[str, Any]] = []
+        for row in rows:
+            payload = {
+                "key": row.key,
+                "label": row.label,
+                "kind": row.kind,
+                "parent_key": row.parent_key,
+                "description": row.description,
+                "sort_order": row.sort_order,
+            }
+            if row.kind == FILTER_KIND:
+                filters.append(payload)
+            elif row.kind == TAG_KIND:
+                tags.append(payload)
+        return {"filters": filters, "tags": tags}
+
+    def report_taxonomy_map(self, report_ids: list[str]) -> dict[str, ReportTaxonomySnapshot]:
+        result = {
+            report_id: ReportTaxonomySnapshot(filter_keys=[], tag_keys=[])
+            for report_id in report_ids
+        }
+        if not report_ids:
+            return result
+
+        with session_scope(self.engine) as session:
+            rows = session.execute(
+                select(ReportTaxonomyLink.report_id, ReportTaxonomyTerm.key, ReportTaxonomyTerm.kind)
+                .join(ReportTaxonomyTerm, ReportTaxonomyTerm.key == ReportTaxonomyLink.term_key)
+                .where(ReportTaxonomyLink.report_id.in_(report_ids))
+                .order_by(ReportTaxonomyTerm.sort_order, ReportTaxonomyTerm.key)
+            ).all()
+
+        for report_id, key, kind in rows:
+            snapshot = result.setdefault(report_id, ReportTaxonomySnapshot(filter_keys=[], tag_keys=[]))
+            if kind == FILTER_KIND:
+                snapshot.filter_keys.append(key)
+            elif kind == TAG_KIND:
+                snapshot.tag_keys.append(key)
+        return result
+
+    def backfill_report_taxonomy(self) -> int:
+        synced = 0
+        with session_scope(self.engine) as session:
+            reports = list(session.scalars(select(Report)))
+            for report in reports:
+                self._sync_report_taxonomy_links(session, report)
+                synced += 1
+        return synced
 
     def list_artifacts(self, *, limit: int = 50) -> list[Artifact]:
         with session_scope(self.engine) as session:
@@ -198,7 +306,12 @@ class LifeRepository:
             if not db_run:
                 return None
             stored_artifacts = self._store_artifacts(session, db_run.id, db_run.task_spec_id, result.artifact_manifest)
-            artifact_index = {artifact.path: artifact for artifact in stored_artifacts if artifact.path}
+            artifact_index = {
+                path: artifact
+                for artifact in stored_artifacts
+                if artifact.path
+                for path in self._artifact_lookup_keys(artifact.path)
+            }
             self._store_observations(session, db_run.id, result.observations)
             stored_reports = self._store_reports(session, db_run.id, result.reports, artifact_index)
             session.flush()
@@ -381,7 +494,12 @@ class LifeRepository:
     ) -> list[Report]:
         stored: list[Report] = []
         for report in reports:
-            source_artifact = artifact_index.get(report.artifact_path or "")
+            source_artifact = None
+            if report.artifact_path:
+                for candidate_path in self._artifact_lookup_keys(report.artifact_path):
+                    source_artifact = artifact_index.get(candidate_path)
+                    if source_artifact is not None:
+                        break
             record = Report(
                 run_id=run_id,
                 source_artifact_id=source_artifact.id if source_artifact else None,
@@ -393,10 +511,46 @@ class LifeRepository:
             )
             session.add(record)
             session.flush()
+            self._sync_report_taxonomy_links(session, record)
             stored.append(record)
         return stored
+
+    @staticmethod
+    def _artifact_lookup_keys(path: str) -> list[str]:
+        keys = [path]
+        try:
+            keys.append(str(Path(path).resolve()))
+        except OSError:
+            pass
+        return keys
 
     @staticmethod
     def _sanitize_fts_query(query: str) -> str:
         tokens = [match.group(0).lower() for match in _FTS_TOKEN_RE.finditer(query)]
         return " AND ".join(tokens)
+
+    def _sync_report_taxonomy_links(self, session, report: Report) -> None:
+        classification = classify_report_taxonomy(
+            report_type=report.report_type,
+            title=report.title,
+            summary=report.summary,
+            metadata=report.metadata_json,
+        )
+        desired_keys = set(classification["filter_keys"]) | set(classification["tag_keys"])
+        existing_keys = set(
+            session.scalars(
+                select(ReportTaxonomyLink.term_key).where(ReportTaxonomyLink.report_id == report.id)
+            )
+        )
+
+        stale_keys = existing_keys - desired_keys
+        if stale_keys:
+            session.execute(
+                delete(ReportTaxonomyLink).where(
+                    ReportTaxonomyLink.report_id == report.id,
+                    ReportTaxonomyLink.term_key.in_(stale_keys),
+                )
+            )
+
+        for key in desired_keys - existing_keys:
+            session.add(ReportTaxonomyLink(report_id=report.id, term_key=key))

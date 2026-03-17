@@ -5,18 +5,29 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from libs.config import Settings
 
 
 def timestamp_slug() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
 
 
 def ensure_worker_dir(settings: Settings, worker_key: str) -> Path:
     path = settings.artifact_root / worker_key / timestamp_slug()
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def resolve_worker_output_path(run_dir: Path, output_path: str | None) -> Path | None:
+    if not output_path:
+        return None
+    requested = Path(output_path).expanduser()
+    if not requested.is_absolute():
+        requested = run_dir / requested
+    requested.parent.mkdir(parents=True, exist_ok=True)
+    return requested
 
 
 def write_json(path: Path, payload: Any) -> None:

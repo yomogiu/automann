@@ -18,6 +18,7 @@
 - `data/runtime/life.db` stores domain entities, runs, artifacts, chunks, observations, reports, and citation links.
 - SQLite FTS5 backs lexical chunk recall through a `chunk_fts` sidecar index.
 - Embeddings are persisted as JSON for compatibility, but semantic ranking is intentionally deferred during the SQLite cutover.
+- Report taxonomy and artifact-link behavior follows [`taxonomy-database.md`](./taxonomy-database.md).
 
 ## Operator UX
 
