@@ -10,6 +10,8 @@ from libs.contracts.models import (
     DraftArticleRequest,
     PaperReviewRequest,
     QueryKnowledgeRequest,
+    ResearchReportRequest,
+    SearchReportCommandRequest,
 )
 
 
@@ -56,6 +58,28 @@ async def draft_article(
 ) -> dict:
     return await orchestration.submit_flow(
         flow_name="substack_draft_flow",
+        parameters=request.model_dump(mode="json"),
+    )
+
+
+@router.post("/research-report")
+async def research_report(
+    request: ResearchReportRequest,
+    orchestration: OrchestrationService = Depends(orchestration_dep),
+) -> dict:
+    return await orchestration.submit_flow(
+        flow_name="research_report_flow",
+        parameters=request.model_dump(mode="json"),
+    )
+
+
+@router.post("/search-report")
+async def search_report(
+    request: SearchReportCommandRequest,
+    orchestration: OrchestrationService = Depends(orchestration_dep),
+) -> dict:
+    return await orchestration.submit_flow(
+        flow_name="codex_search_report_flow",
         parameters=request.model_dump(mode="json"),
     )
 
