@@ -16,4 +16,4 @@ if [[ -f .env ]]; then
 fi
 
 source .venv/bin/activate
-exec life-api
+exec automann-api

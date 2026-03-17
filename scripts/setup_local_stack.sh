@@ -4,9 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-RUNTIME_DIR="data/runtime"
-mkdir -p "$RUNTIME_DIR"
-
 if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
@@ -14,6 +11,13 @@ fi
 set -a
 source .env
 set +a
+
+RUNTIME_DIR="${LIFE_RUNTIME_ROOT:-$(python3 - <<'PY'
+from libs.config import get_settings
+print(get_settings().runtime_root)
+PY
+)}"
+mkdir -p "$RUNTIME_DIR"
 
 if [[ ! -d .venv ]]; then
   python3 -m venv .venv
@@ -35,7 +39,7 @@ until curl -fsS "${LIFE_PREFECT_UI_URL:-http://127.0.0.1:4200}/api/health" >/dev
 done
 
 prefect work-pool inspect mini-process >/dev/null 2>&1 || prefect work-pool create mini-process --type process
-prefect work-pool inspect mini-docker >/dev/null 2>&1 || prefect work-pool create mini-docker --type docker
+prefect work-pool inspect browser-process >/dev/null 2>&1 || prefect work-pool create browser-process --type process
 prefect work-pool inspect mbp-process >/dev/null 2>&1 || prefect work-pool create mbp-process --type process
 
 if [[ ! -f "$RUNTIME_DIR/prefect-serve.pid" ]] || ! kill -0 "$(cat "$RUNTIME_DIR/prefect-serve.pid")" 2>/dev/null; then
@@ -54,14 +58,22 @@ if [[ ! -f "$RUNTIME_DIR/api.pid" ]] || ! kill -0 "$(cat "$RUNTIME_DIR/api.pid")
 fi
 
 cat <<EOF
-Life system bootstrap complete.
+Auto Mann bootstrap complete.
 
 Services:
   - Prefect UI: ${LIFE_PREFECT_UI_URL:-http://127.0.0.1:4200}
   - API: http://${LIFE_API_HOST:-127.0.0.1}:${LIFE_API_PORT:-8000}
-  - TUI: source .venv/bin/activate && life-tui
-  - Life DB: ${LIFE_DATABASE_URL:-sqlite+pysqlite:///$ROOT/data/runtime/life.db}
-  - Prefect DB: ${LIFE_PREFECT_DATABASE_URL:-sqlite+aiosqlite:///$ROOT/data/runtime/prefect.db}
+  - TUI: source .venv/bin/activate && automann-tui
+  - Life DB: ${LIFE_DATABASE_URL:-$(python3 - <<'PY'
+from libs.config import get_settings
+print(get_settings().life_database_url)
+PY
+)}
+  - Prefect DB: ${LIFE_PREFECT_DATABASE_URL:-$(python3 - <<'PY'
+from libs.config import get_settings
+print(get_settings().prefect_database_url)
+PY
+)}
 
 Logs:
   - $RUNTIME_DIR/prefect-server.log

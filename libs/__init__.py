@@ -1,1 +1,1 @@
-"""Shared libraries for the life system."""
+"""Shared libraries for Auto Mann."""

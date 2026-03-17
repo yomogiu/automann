@@ -11,7 +11,7 @@ from .ui import run_dashboard
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Life system operator console")
+    parser = argparse.ArgumentParser(description="Auto Mann operator console")
     parser.add_argument(
         "--once",
         choices=["health", "runs", "reports", "artifacts", "dashboard"],

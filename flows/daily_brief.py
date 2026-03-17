@@ -10,6 +10,7 @@ from libs.contracts.models import BrowserJobRequest, DailyBriefRequest
 from libs.contracts.workers import (
     ArxivFeedIngestRequest,
     DailyBriefAnalysisRequest,
+    BrowserTaskRequest,
     NewsIngestRequest,
     PublishRequest,
 )
@@ -37,6 +38,12 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
         brief_date=brief_date,
         seed_arxiv=list(brief_request.metadata.get("seed_arxiv") or []),
         metadata=dict(brief_request.metadata),
+    )
+    browser_request = BrowserTaskRequest.from_command(
+        BrowserJobRequest(
+            job_name="scheduled-browser-jobs",
+            target_url="https://example.invalid/browser-jobs",
+        )
     )
 
     if run_id is not None:
@@ -66,13 +73,8 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
         browser_result = execute_adapter(
             flow_name="daily_brief_flow",
             worker_key=browser_runner.worker_key,
-            input_payload={"date": brief_date.isoformat()},
-            runner=lambda: browser_runner.run(
-                BrowserJobRequest(
-                    job_name="scheduled-browser-jobs",
-                    target_url="https://example.invalid/browser-jobs",
-                )
-            ),
+            input_payload=browser_request.model_dump(mode="json"),
+            runner=lambda: browser_runner.run(browser_request),
             parent_run_id=run_id,
         )
 

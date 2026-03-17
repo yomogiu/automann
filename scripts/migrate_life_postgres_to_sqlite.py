@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
 from libs.config import get_settings
-from libs.db import bootstrap_life_database, engine_for_url, rebuild_chunk_fts
+from libs.db import LifeRepository, bootstrap_life_database, engine_for_url, rebuild_chunk_fts
 from libs.db.bootstrap import bootstrap_report_taxonomy
 
 
@@ -111,6 +111,13 @@ def migrate_life_data(source_engine: Engine, target_engine: Engine) -> dict[str,
                         select(*(source_table.c[column] for column in common_columns))
                     ).mappings()
                 ]
+                if table_name == "report":
+                    for row in rows:
+                        report_id = str(row.get("id") or "")
+                        row.setdefault("report_series_id", report_id)
+                        row.setdefault("revision_number", 1)
+                        row.setdefault("supersedes_report_id", None)
+                        row.setdefault("is_current", True)
                 if rows:
                     target_connection.execute(target_table.insert(), rows)
 
@@ -134,6 +141,7 @@ def migrate_life_data(source_engine: Engine, target_engine: Engine) -> dict[str,
                 raise RuntimeError(f"Foreign key validation failed: {fk_issues}")
 
     rebuild_chunk_fts(target_engine)
+    LifeRepository(target_engine).backfill_report_revisions()
     bootstrap_report_taxonomy(target_engine)
     validate_migration_counts(summaries)
     return summaries

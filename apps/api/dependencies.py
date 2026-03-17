@@ -6,6 +6,7 @@ from libs.config import Settings, get_settings
 from libs.db import LifeRepository, engine_for_url
 from libs.retrieval import RetrievalService
 
+from .automation_service import AutomationService
 from .services import OrchestrationService
 
 
@@ -28,3 +29,8 @@ def retrieval_dep() -> RetrievalService:
 @lru_cache
 def orchestration_dep() -> OrchestrationService:
     return OrchestrationService(settings_dep(), repository_dep(), retrieval_dep())
+
+
+@lru_cache
+def automation_dep() -> AutomationService:
+    return AutomationService(settings_dep(), repository_dep(), orchestration_dep())

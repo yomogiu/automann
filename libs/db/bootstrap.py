@@ -41,6 +41,26 @@ SQLITE_SUPPORTING_DDL = (
     """,
 )
 
+SQLITE_REPORT_REVISION_DDL = (
+    "ALTER TABLE report ADD COLUMN report_series_id VARCHAR(255)",
+    "ALTER TABLE report ADD COLUMN revision_number INTEGER DEFAULT 1 NOT NULL",
+    "ALTER TABLE report ADD COLUMN supersedes_report_id VARCHAR(36)",
+    "ALTER TABLE report ADD COLUMN is_current BOOLEAN DEFAULT 1 NOT NULL",
+    "CREATE INDEX IF NOT EXISTS ix_report_series_revision ON report (report_series_id, revision_number)",
+    "CREATE INDEX IF NOT EXISTS ix_report_series_current ON report (report_series_id, is_current)",
+)
+
+SQLITE_TASK_SPEC_AUTOMATION_DDL = (
+    "ALTER TABLE task_spec ADD COLUMN flow_name VARCHAR(255)",
+    "ALTER TABLE task_spec ADD COLUMN timezone VARCHAR(100)",
+    "ALTER TABLE task_spec ADD COLUMN work_pool VARCHAR(255)",
+    "ALTER TABLE task_spec ADD COLUMN prompt_path VARCHAR(1024)",
+    "ALTER TABLE task_spec ADD COLUMN prefect_deployment_id VARCHAR(36)",
+    "ALTER TABLE task_spec ADD COLUMN prefect_deployment_name VARCHAR(255)",
+    "ALTER TABLE task_spec ADD COLUMN prefect_deployment_path VARCHAR(255)",
+    "ALTER TABLE task_spec ADD COLUMN prefect_deployment_url VARCHAR(2048)",
+)
+
 
 def _is_sqlite_url(database_url: str) -> bool:
     return make_url(database_url).get_backend_name() == "sqlite"
@@ -69,6 +89,45 @@ def _bootstrap_sqlite_support(engine: Engine) -> None:
         for statement in SQLITE_SUPPORTING_DDL:
             connection.exec_driver_sql(statement)
     rebuild_chunk_fts(engine)
+
+
+def _bootstrap_report_revisions(engine: Engine) -> None:
+    if engine.dialect.name != "sqlite":
+        LifeRepository(engine).backfill_report_revisions()
+        return
+
+    with engine.begin() as connection:
+        existing_columns = {
+            row["name"]
+            for row in connection.exec_driver_sql("PRAGMA table_info('report')").mappings()
+        }
+        for statement in SQLITE_REPORT_REVISION_DDL:
+            if statement.startswith("ALTER TABLE report ADD COLUMN report_series_id") and "report_series_id" in existing_columns:
+                continue
+            if statement.startswith("ALTER TABLE report ADD COLUMN revision_number") and "revision_number" in existing_columns:
+                continue
+            if statement.startswith("ALTER TABLE report ADD COLUMN supersedes_report_id") and "supersedes_report_id" in existing_columns:
+                continue
+            if statement.startswith("ALTER TABLE report ADD COLUMN is_current") and "is_current" in existing_columns:
+                continue
+            connection.exec_driver_sql(statement)
+    LifeRepository(engine).backfill_report_revisions()
+
+
+def _bootstrap_task_spec_automation_fields(engine: Engine) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+
+    with engine.begin() as connection:
+        existing_columns = {
+            row["name"]
+            for row in connection.exec_driver_sql("PRAGMA table_info('task_spec')").mappings()
+        }
+        for statement in SQLITE_TASK_SPEC_AUTOMATION_DDL:
+            column_name = statement.split(" ADD COLUMN ", maxsplit=1)[1].split(" ", maxsplit=1)[0]
+            if column_name in existing_columns:
+                continue
+            connection.exec_driver_sql(statement)
 
 
 def bootstrap_report_taxonomy(engine: Engine) -> None:
@@ -101,6 +160,8 @@ def bootstrap_life_database(settings: Settings) -> None:
     engine = engine_for_url(settings.life_database_url)
     Base.metadata.create_all(engine)
     _bootstrap_sqlite_support(engine)
+    _bootstrap_task_spec_automation_fields(engine)
+    _bootstrap_report_revisions(engine)
     bootstrap_report_taxonomy(engine)
 
 

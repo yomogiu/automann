@@ -16,8 +16,12 @@ if [[ -f .env ]]; then
 fi
 
 source .venv/bin/activate
-export PREFECT_PROFILE="${LIFE_PREFECT_PROFILE_NAME:-life-system}"
-DEFAULT_PREFECT_DB_URL="sqlite+aiosqlite:///$ROOT/data/runtime/prefect.db"
+export PREFECT_PROFILE="${LIFE_PREFECT_PROFILE_NAME:-automann}"
+DEFAULT_PREFECT_DB_URL="$(python3 - <<'PY'
+from libs.config import get_settings
+print(get_settings().prefect_database_url)
+PY
+)"
 export PREFECT_API_DATABASE_CONNECTION_URL="${PREFECT_API_DATABASE_CONNECTION_URL:-${LIFE_PREFECT_DATABASE_URL:-$DEFAULT_PREFECT_DB_URL}}"
 
 python3 - <<'PY'

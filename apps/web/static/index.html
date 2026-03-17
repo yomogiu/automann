@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Brewhouse Archive</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="masthead">
+      <div class="masthead-top">
+        <div>
+          <div class="brand">The <em>Brewhouse</em> Archive</div>
+          <div class="tagline">Document Repository &mdash; Live System Output</div>
+        </div>
+        <div class="meta-row">
+          <span>Open stacks</span>
+          <span id="totalCount">&mdash; docs</span>
+          <span id="todayDate"></span>
+        </div>
+      </div>
+      <nav class="masthead-nav" aria-label="Primary">
+        <a class="nav-chip is-active" href="/">Archive</a>
+        <a class="nav-chip" href="/automations">Automations</a>
+      </nav>
+    </header>
+
+    <div class="search-row">
+      <div class="search-wrap">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"></circle><path d="M13 13l3 3"></path></svg>
+        <input id="searchInput" type="text" placeholder="Search the stacks&hellip;" autocomplete="off">
+      </div>
+      <button class="btn btn-brew" id="searchButton" type="button">Brew search</button>
+      <button class="btn" id="clearButton" type="button">Clear</button>
+    </div>
+
+    <div class="filter-bar" id="filterBar">
+      <span class="filter-label">Filter:</span>
+      <button class="pill active" type="button" data-filter="all">All</button>
+    </div>
+
+    <div class="status-bar">
+      <span id="statusText">Showing all documents</span>
+      <span class="status-count" id="resultCount"></span>
+    </div>
+
+    <div id="flashMessage" class="flash-message" hidden></div>
+    <div id="resultArea">
+      <div class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="M12 6.253v13"></path><path d="M12 6.253C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253"></path><path d="M12 6.253C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+        <div class="empty-title" style="margin-top:.6rem">Loading the stacks</div>
+        <div class="empty-sub">Pulling taxonomy-backed reports from the archive</div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

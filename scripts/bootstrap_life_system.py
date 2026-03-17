@@ -14,8 +14,8 @@ def ensure_directories() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Bootstrap life-system directories and the life database")
-    parser.add_argument("--skip-db", action="store_true", help="Skip life database initialization")
+    parser = argparse.ArgumentParser(description="Bootstrap automann directories and the automann database")
+    parser.add_argument("--skip-db", action="store_true", help="Skip automann database initialization")
     args = parser.parse_args()
 
     ensure_directories()

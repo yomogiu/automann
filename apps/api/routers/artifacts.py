@@ -40,7 +40,7 @@ def _artifact_file_path(path: str | None, storage_uri: str) -> Path | None:
 def _text_preview_allowed(media_type: str | None, path: Path) -> bool:
     if media_type and (media_type.startswith("text/") or media_type in PREVIEWABLE_MEDIA_TYPES):
         return True
-    return path.suffix.lower() in {".json", ".md", ".markdown", ".txt", ".log", ".html", ".xml", ".svg"}
+    return path.suffix.lower() in {".csv", ".json", ".md", ".markdown", ".txt", ".log", ".html", ".xml", ".svg"}
 
 
 @router.get("")

@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Select, delete, desc, select, text
+from sqlalchemy import Select, delete, desc, or_, select, text, update
 from sqlalchemy.engine import Engine
 
 from libs.contracts.models import SCHEMA_VERSION, AdapterResult, ArtifactRecord, ObservationRecord, ReportRecord
@@ -41,6 +41,7 @@ class ReportTaxonomySnapshot:
 
 
 _FTS_TOKEN_RE = re.compile(r"\w+")
+_MISSING = object()
 
 
 class LifeRepository:
@@ -52,24 +53,137 @@ class LifeRepository:
         *,
         task_key: str,
         task_type: str,
+        flow_name: str | None = None,
         title: str,
         description: str | None = None,
         schedule_text: str | None = None,
+        timezone: str | None = None,
+        work_pool: str | None = None,
+        prompt_path: str | None = None,
+        status: str = "active",
+        prefect_deployment_id: str | None = None,
+        prefect_deployment_name: str | None = None,
+        prefect_deployment_path: str | None = None,
+        prefect_deployment_url: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> TaskSpec:
         with session_scope(self.engine) as session:
             record = TaskSpec(
                 task_key=task_key,
                 task_type=task_type,
+                flow_name=flow_name,
                 title=title,
                 description=description,
                 schedule_text=schedule_text,
+                timezone=timezone,
+                work_pool=work_pool,
+                prompt_path=prompt_path,
+                status=status,
+                prefect_deployment_id=prefect_deployment_id,
+                prefect_deployment_name=prefect_deployment_name,
+                prefect_deployment_path=prefect_deployment_path,
+                prefect_deployment_url=prefect_deployment_url,
                 payload=payload or {},
             )
             session.add(record)
             session.flush()
             session.refresh(record)
             return record
+
+    def get_task_spec(self, task_spec_id: str) -> TaskSpec | None:
+        with session_scope(self.engine) as session:
+            return session.get(TaskSpec, task_spec_id)
+
+    def get_task_spec_by_key(self, task_key: str) -> TaskSpec | None:
+        with session_scope(self.engine) as session:
+            stmt = select(TaskSpec).where(TaskSpec.task_key == task_key).limit(1)
+            return session.scalars(stmt).first()
+
+    def list_task_specs(self, *, status: str | None = None, limit: int = 100) -> list[TaskSpec]:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[TaskSpec]] = select(TaskSpec)
+            if status is not None:
+                stmt = stmt.where(TaskSpec.status == status)
+            stmt = stmt.order_by(desc(TaskSpec.updated_at), desc(TaskSpec.created_at)).limit(limit)
+            return list(session.scalars(stmt))
+
+    def update_task_spec(
+        self,
+        task_spec_id: str,
+        *,
+        task_type: str | object = _MISSING,
+        flow_name: str | None | object = _MISSING,
+        title: str | object = _MISSING,
+        description: str | None | object = _MISSING,
+        schedule_text: str | None | object = _MISSING,
+        timezone: str | None | object = _MISSING,
+        work_pool: str | None | object = _MISSING,
+        prompt_path: str | None | object = _MISSING,
+        status: str | object = _MISSING,
+        prefect_deployment_id: str | None | object = _MISSING,
+        prefect_deployment_name: str | None | object = _MISSING,
+        prefect_deployment_path: str | None | object = _MISSING,
+        prefect_deployment_url: str | None | object = _MISSING,
+        payload: dict[str, Any] | object = _MISSING,
+    ) -> TaskSpec | None:
+        with session_scope(self.engine) as session:
+            record = session.get(TaskSpec, task_spec_id)
+            if record is None:
+                return None
+
+            updates = {
+                "task_type": task_type,
+                "flow_name": flow_name,
+                "title": title,
+                "description": description,
+                "schedule_text": schedule_text,
+                "timezone": timezone,
+                "work_pool": work_pool,
+                "prompt_path": prompt_path,
+                "status": status,
+                "prefect_deployment_id": prefect_deployment_id,
+                "prefect_deployment_name": prefect_deployment_name,
+                "prefect_deployment_path": prefect_deployment_path,
+                "prefect_deployment_url": prefect_deployment_url,
+                "payload": payload,
+            }
+            for field_name, value in updates.items():
+                if value is _MISSING:
+                    continue
+                setattr(record, field_name, value)
+
+            session.flush()
+            session.refresh(record)
+            return record
+
+    def update_task_spec_status(self, task_spec_id: str, *, status: str) -> TaskSpec | None:
+        return self.update_task_spec(task_spec_id, status=status)
+
+    def attach_task_spec_prefect_metadata(
+        self,
+        task_spec_id: str,
+        *,
+        prefect_deployment_id: str | None = None,
+        prefect_deployment_name: str | None = None,
+        prefect_deployment_path: str | None = None,
+        prefect_deployment_url: str | None = None,
+    ) -> TaskSpec | None:
+        return self.update_task_spec(
+            task_spec_id,
+            prefect_deployment_id=prefect_deployment_id,
+            prefect_deployment_name=prefect_deployment_name,
+            prefect_deployment_path=prefect_deployment_path,
+            prefect_deployment_url=prefect_deployment_url,
+        )
+
+    def delete_task_spec(self, task_spec_id: str) -> bool:
+        with session_scope(self.engine) as session:
+            record = session.get(TaskSpec, task_spec_id)
+            if record is None:
+                return False
+            session.delete(record)
+            session.flush()
+            return True
 
     def get_run(self, run_id: str) -> RunRecord | None:
         with session_scope(self.engine) as session:
@@ -128,10 +242,115 @@ class LifeRepository:
             stmt = stmt.order_by(desc(RunRecord.created_at)).limit(limit)
             return list(session.scalars(stmt))
 
-    def list_reports(self, *, limit: int = 25) -> list[Report]:
+    def list_runs_for_task_spec(
+        self,
+        task_spec_id: str,
+        *,
+        limit: int = 25,
+        include_children: bool = False,
+    ) -> list[RunRecord]:
         with session_scope(self.engine) as session:
-            stmt: Select[tuple[Report]] = select(Report).order_by(desc(Report.created_at)).limit(limit)
+            stmt: Select[tuple[RunRecord]] = select(RunRecord).where(RunRecord.task_spec_id == task_spec_id)
+            if not include_children:
+                stmt = stmt.where(RunRecord.parent_run_id.is_(None))
+            stmt = stmt.order_by(desc(RunRecord.created_at)).limit(limit)
             return list(session.scalars(stmt))
+
+    def list_reports(self, *, limit: int = 25, current_only: bool = True) -> list[Report]:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[Report]] = select(Report)
+            if current_only:
+                stmt = stmt.where(or_(Report.is_current.is_(True), Report.is_current.is_(None)))
+            stmt = stmt.order_by(desc(Report.created_at)).limit(limit)
+            return list(session.scalars(stmt))
+
+    def list_report_revisions(self, report_id: str) -> list[Report]:
+        with session_scope(self.engine) as session:
+            target = session.get(Report, report_id)
+            if target is None:
+                return []
+            series_id = target.report_series_id or target.id
+            stmt: Select[tuple[Report]] = (
+                select(Report)
+                .where(Report.report_series_id == series_id)
+                .order_by(desc(Report.revision_number), desc(Report.created_at))
+            )
+            return list(session.scalars(stmt))
+
+    def current_report_revision(self, report_series_id: str) -> Report | None:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[Report]] = (
+                select(Report)
+                .where(
+                    Report.report_series_id == report_series_id,
+                    Report.is_current.is_(True),
+                )
+                .order_by(desc(Report.revision_number), desc(Report.created_at))
+                .limit(1)
+            )
+            return session.scalars(stmt).first()
+
+    def latest_report_revision(self, report_series_id: str) -> Report | None:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[Report]] = (
+                select(Report)
+                .where(Report.report_series_id == report_series_id)
+                .order_by(desc(Report.revision_number), desc(Report.created_at))
+                .limit(1)
+            )
+            return session.scalars(stmt).first()
+
+    def promote_report_revision(self, report_id: str) -> Report | None:
+        with session_scope(self.engine) as session:
+            target = session.get(Report, report_id)
+            if target is None:
+                return None
+            series_id = target.report_series_id or target.id
+            session.execute(
+                update(Report)
+                .where(Report.report_series_id == series_id)
+                .values(is_current=False)
+            )
+            target.is_current = True
+            if target.report_series_id is None:
+                target.report_series_id = series_id
+            session.flush()
+            session.refresh(target)
+            return target
+
+    def backfill_report_revisions(self) -> int:
+        updated = 0
+        with session_scope(self.engine) as session:
+            reports = list(session.scalars(select(Report).order_by(Report.created_at, Report.id)))
+            by_series: dict[str, list[Report]] = {}
+            for report in reports:
+                series_id = report.report_series_id or report.id
+                if report.report_series_id is None:
+                    report.report_series_id = series_id
+                    updated += 1
+                if report.revision_number is None:
+                    report.revision_number = 1
+                    updated += 1
+                if report.is_current is None:
+                    report.is_current = True
+                    updated += 1
+                by_series.setdefault(series_id, []).append(report)
+
+            for series_reports in by_series.values():
+                ordered = sorted(
+                    series_reports,
+                    key=lambda item: ((item.revision_number or 0), item.created_at, item.id),
+                )
+                for index, report in enumerate(ordered, start=1):
+                    if report.revision_number != index:
+                        report.revision_number = index
+                        updated += 1
+                    should_be_current = report is ordered[-1]
+                    if report.is_current != should_be_current:
+                        report.is_current = should_be_current
+                        updated += 1
+            session.flush()
+        return updated
 
     def list_report_taxonomy(self) -> dict[str, list[dict[str, Any]]]:
         with session_scope(self.engine) as session:
@@ -440,6 +659,7 @@ class LifeRepository:
             stmt = select(Report)
             if report_type:
                 stmt = stmt.where(Report.report_type == report_type)
+            stmt = stmt.where(or_(Report.is_current.is_(True), Report.is_current.is_(None)))
             stmt = stmt.order_by(desc(Report.created_at)).limit(1)
             return session.scalars(stmt).first()
 
@@ -507,10 +727,17 @@ class LifeRepository:
                 title=report.title,
                 summary=report.summary,
                 content_markdown=report.content_markdown,
+                report_series_id=report.report_series_id,
+                revision_number=report.revision_number or 1,
+                supersedes_report_id=report.supersedes_report_id,
+                is_current=True if report.is_current is None else report.is_current,
                 metadata_json=report.metadata,
             )
             session.add(record)
             session.flush()
+            if record.report_series_id is None:
+                record.report_series_id = record.id
+                session.flush()
             self._sync_report_taxonomy_links(session, record)
             stored.append(record)
         return stored

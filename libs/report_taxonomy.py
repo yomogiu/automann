@@ -72,6 +72,14 @@ REPORT_TAXONOMY_TERMS = (
         sort_order=130,
     ),
     ReportTaxonomyTermDefinition(
+        key="search_report",
+        label="Search Report",
+        kind=TAG_KIND,
+        parent_key="report",
+        description="Search-driven report outputs.",
+        sort_order=135,
+    ),
+    ReportTaxonomyTermDefinition(
         key="synthesis",
         label="Synthesis",
         kind=TAG_KIND,
@@ -200,6 +208,12 @@ def classify_report_taxonomy(
     elif report_type_key == "substack_draft":
         filters.add("report")
         tags.add("deep_research")
+    elif report_type_key == "research_report":
+        filters.add("report")
+        tags.add("deep_research")
+    elif report_type_key == "search_report":
+        filters.add("report")
+        tags.add("search_report")
     elif report_type_key:
         filters.add("report")
 

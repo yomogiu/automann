@@ -152,3 +152,134 @@ class SQLiteRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(answered)
         assert answered is not None
         self.assertEqual(answered.status, "answered")
+
+    def test_report_revision_helpers_promote_and_list_current_series(self) -> None:
+        first_run = self.repository.start_run(
+            flow_name="research_report_flow",
+            worker_key="worker",
+            input_payload={"theme": "Test"},
+            status="running",
+        )
+        first_result = AdapterResult(
+            status=WorkerStatus.COMPLETED,
+            reports=[
+                ReportRecord(
+                    report_type="research_report",
+                    title="Research Report",
+                    summary="v1",
+                    content_markdown="# V1",
+                    report_series_id="research-key",
+                    revision_number=1,
+                    is_current=False,
+                    metadata={"report_key": "research-key"},
+                )
+            ],
+        )
+        first_persisted = self.repository.persist_adapter_result(first_run.id, first_result)
+        self.assertIsNotNone(first_persisted)
+        assert first_persisted is not None
+        first_report = first_persisted.reports[0]
+
+        promoted_first = self.repository.promote_report_revision(first_report.id)
+        self.assertIsNotNone(promoted_first)
+        assert promoted_first is not None
+        self.assertTrue(promoted_first.is_current)
+
+        second_run = self.repository.start_run(
+            flow_name="research_report_flow",
+            worker_key="worker",
+            input_payload={"theme": "Test"},
+            status="running",
+        )
+        second_result = AdapterResult(
+            status=WorkerStatus.COMPLETED,
+            reports=[
+                ReportRecord(
+                    report_type="research_report",
+                    title="Research Report",
+                    summary="v2",
+                    content_markdown="# V2",
+                    report_series_id="research-key",
+                    revision_number=2,
+                    supersedes_report_id=first_report.id,
+                    is_current=False,
+                    metadata={"report_key": "research-key"},
+                )
+            ],
+        )
+        second_persisted = self.repository.persist_adapter_result(second_run.id, second_result)
+        self.assertIsNotNone(second_persisted)
+        assert second_persisted is not None
+        second_report = second_persisted.reports[0]
+
+        self.repository.promote_report_revision(second_report.id)
+
+        current = self.repository.current_report_revision("research-key")
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(current.id, second_report.id)
+
+        revisions = self.repository.list_report_revisions(second_report.id)
+        self.assertEqual([item.revision_number for item in revisions], [2, 1])
+        self.assertEqual(revisions[0].supersedes_report_id, first_report.id)
+
+        listed = self.repository.list_reports(limit=10)
+        self.assertEqual([item.id for item in listed], [second_report.id])
+
+    def test_task_spec_roundtrip_and_run_listing(self) -> None:
+        task_spec = self.repository.create_task_spec(
+            task_key="daily-brief-main",
+            task_type="daily_brief",
+            flow_name="daily_brief_flow",
+            title="Daily Brief",
+            description="Morning synthesis",
+            schedule_text="0 7 * * *",
+            timezone="America/Toronto",
+            work_pool="mini-process",
+            prompt_path=str(self.runtime_root / "prompts" / "brief.md"),
+            status="active",
+            prefect_deployment_id="dep-1",
+            prefect_deployment_name="automation-daily-brief-main",
+            prefect_deployment_path="daily-brief/automation-daily-brief-main",
+            prefect_deployment_url="http://127.0.0.1:4200/deployments/deployment/dep-1",
+            payload={"publish": True},
+        )
+
+        fetched = self.repository.get_task_spec(task_spec.id)
+        self.assertIsNotNone(fetched)
+        assert fetched is not None
+        self.assertEqual(fetched.flow_name, "daily_brief_flow")
+        self.assertEqual(fetched.timezone, "America/Toronto")
+
+        updated = self.repository.update_task_spec(
+            task_spec.id,
+            status="paused",
+            schedule_text="30 7 * * *",
+            payload={"publish": False},
+        )
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertEqual(updated.status, "paused")
+        self.assertEqual(updated.schedule_text, "30 7 * * *")
+        self.assertEqual(updated.payload, {"publish": False})
+
+        top_level = self.repository.start_run(
+            flow_name="daily_brief_flow",
+            worker_key="mini-process",
+            input_payload={"publish": False},
+            task_spec_id=task_spec.id,
+            status="running",
+        )
+        child = self.repository.start_run(
+            flow_name="daily_brief_flow",
+            worker_key="analysis_runner",
+            input_payload={"stage": "analysis"},
+            task_spec_id=task_spec.id,
+            parent_run_id=top_level.id,
+            status="running",
+        )
+
+        top_level_runs = self.repository.list_runs_for_task_spec(task_spec.id, limit=10)
+        all_runs = self.repository.list_runs_for_task_spec(task_spec.id, limit=10, include_children=True)
+        self.assertEqual([item.id for item in top_level_runs], [top_level.id])
+        self.assertEqual([item.id for item in all_runs], [child.id, top_level.id])

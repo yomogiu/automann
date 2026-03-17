@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "life-system"
+name = "automann"
 version = "0.1.0"
 description = "Prefect-first local research automation orchestration system."
 readme = "README.md"
@@ -23,13 +23,16 @@ dependencies = [
 dev = [
   "pytest>=8.0,<9.0",
 ]
+browser = [
+  "playwright>=1.53,<2.0",
+]
 migration = [
   "psycopg[binary]>=3.1,<4.0",
 ]
 
 [project.scripts]
-life-api = "apps.api.main:run"
-life-tui = "apps.tui.main:main"
+automann-api = "apps.api.main:run"
+automann-tui = "apps.tui.main:main"
 
 [tool.setuptools]
 include-package-data = true

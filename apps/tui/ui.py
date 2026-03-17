@@ -58,7 +58,7 @@ def run_dashboard(stdscr: curses.window, client: APIClient, settings) -> int:
     while True:
         stdscr.erase()
         h, w = stdscr.getmaxyx()
-        title = "Life System Operator Console"
+        title = "Auto Mann Operator Console"
         stdscr.addstr(0, 2, _truncate(title, w - 4), curses.A_BOLD)
 
         tabs = " | ".join(
@@ -92,7 +92,7 @@ def run_dashboard(stdscr: curses.window, client: APIClient, settings) -> int:
             rows = [
                 f"API status: {health.get('status', 'unknown')}",
                 f"Prefect API: {health.get('prefect_api_url', 'n/a')}",
-                f"Life DB: {health.get('life_database_url', 'n/a')}",
+                f"Auto Mann DB: {health.get('life_database_url', 'n/a')}",
                 f"Agentboard bridge: {'available' if agentboard_available(settings) else 'missing'}",
             ]
 
@@ -145,5 +145,4 @@ def run_dashboard(stdscr: curses.window, client: APIClient, settings) -> int:
             launch_agentboard(settings)
             stdscr.refresh()
             status_line = "Returned from TODO-agentboard."
-
 

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Brewhouse Automations</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/automations.css">
+  <script src="/static/automations.js" defer></script>
+</head>
+<body>
+  <main class="app automations-app">
+    <header class="masthead">
+      <div class="masthead-top">
+        <div>
+          <div class="brand">The <em>Brewhouse</em> Automations</div>
+          <div class="tagline">Automation Recipes &mdash; Lightweight Control Surface</div>
+        </div>
+        <div class="meta-row">
+          <span>Thin facade</span>
+          <span id="automationCount">&mdash; recipes</span>
+          <span id="automationTodayDate"></span>
+        </div>
+      </div>
+      <nav class="masthead-nav" aria-label="Primary">
+        <a class="nav-chip" href="/">Archive</a>
+        <a class="nav-chip is-active" href="/automations">Automations</a>
+      </nav>
+    </header>
+
+    <div class="flash-message" id="pageFlash" hidden></div>
+
+    <section class="automation-status-strip" id="statusStrip" aria-label="Runtime status">
+      <article class="status-tile">
+        <div class="status-tile-label">Prefect</div>
+        <div class="status-tile-value" id="prefectState">Checking stack</div>
+        <div class="status-tile-note" id="prefectNote">Reading the local control plane</div>
+      </article>
+      <article class="status-tile">
+        <div class="status-tile-label">Recent runs</div>
+        <div class="status-tile-value" id="recentRunCount">—</div>
+        <div class="status-tile-note" id="recentRunNote">Waiting for run history</div>
+      </article>
+      <article class="status-tile">
+        <div class="status-tile-label">Boundary</div>
+        <div class="status-tile-value">Setup here</div>
+        <div class="status-tile-note">Deep logs and retries stay in Prefect</div>
+      </article>
+      <article class="status-tile status-tile-actions">
+        <a class="inline-button inline-button-primary" id="prefectLink" href="http://127.0.0.1:4200" target="_blank" rel="noreferrer">Open Prefect</a>
+        <button class="inline-button" id="showBoundaryButton" type="button">Why this split?</button>
+      </article>
+    </section>
+
+    <section class="template-section" aria-labelledby="templateTitle">
+      <div class="section-heading">
+        <div>
+          <div class="section-kicker">New recipe</div>
+          <h1 class="section-title" id="templateTitle">Choose a starting pattern</h1>
+        </div>
+        <div class="detail-actions">
+          <div class="section-note">Structured first, advanced JSON when needed.</div>
+          <button class="btn" id="newAutomationButton" type="button">New from template</button>
+        </div>
+      </div>
+      <div class="template-grid" id="templateGrid"></div>
+    </section>
+
+    <section class="automation-workbench" aria-labelledby="workbenchTitle">
+      <div class="section-heading">
+        <div>
+          <div class="section-kicker">Workbench</div>
+          <h2 class="section-title" id="workbenchTitle">Saved automations</h2>
+        </div>
+        <div class="section-note">Kick off and tune recipes here, then inspect deep runtime details in Prefect.</div>
+      </div>
+      <div class="automation-layout">
+        <aside class="automation-list-panel">
+          <div class="panel-head">
+            <div class="panel-title">Recipe shelf</div>
+            <div class="panel-meta" id="listMeta">Loading examples</div>
+          </div>
+          <div class="automation-list" id="automationList"></div>
+        </aside>
+
+        <section class="automation-detail-panel" aria-live="polite">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" id="detailTitle">Select a recipe</div>
+              <div class="panel-meta" id="detailSubtitle">Inspect cadence, scope, and lightweight runtime status.</div>
+            </div>
+            <div class="detail-actions">
+              <button class="btn btn-brew" id="saveAutomationButton" type="button">Save</button>
+              <button class="btn btn-brew" id="runNowButton" type="button">Run now</button>
+              <button class="btn" id="pauseButton" type="button">Pause</button>
+              <button class="btn" id="archiveButton" type="button">Archive</button>
+              <a class="inline-button" id="openDeploymentButton" href="http://127.0.0.1:4200" target="_blank" rel="noreferrer">Deployment</a>
+              <a class="inline-button" id="openRunButton" href="http://127.0.0.1:4200" target="_blank" rel="noreferrer">Latest run</a>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <article class="detail-card">
+              <div class="detail-kicker">Deployment</div>
+              <div class="detail-title" id="scheduleTitle">Cadence pending</div>
+              <div class="detail-summary" id="scheduleSummary">Select a recipe to inspect its cadence and worker lane.</div>
+              <div class="detail-meta" id="detailMeta"></div>
+            </article>
+
+            <article class="detail-card">
+              <div class="detail-kicker">Structured config</div>
+              <div class="structured-grid" id="configFields"></div>
+            </article>
+          </div>
+
+          <div class="detail-grid detail-grid-bottom">
+            <article class="detail-card">
+              <div class="detail-kicker">Prompt instructions</div>
+              <div class="prompt-path" id="promptPath">No prompt file for this recipe.</div>
+              <div class="preview-block">
+                <div class="preview-title">Refinable prompt</div>
+                <textarea class="copy-block editor-textarea" id="promptPreview" spellcheck="false">Select a search automation to inspect its prompt instructions.</textarea>
+              </div>
+            </article>
+
+            <article class="detail-card">
+              <div class="detail-kicker">Advanced spec</div>
+              <div class="preview-block">
+                <div class="preview-title">JSON payload</div>
+                <textarea class="copy-block editor-textarea" id="jsonPreview" spellcheck="false">{}</textarea>
+              </div>
+              <div class="inline-form-actions">
+                <button class="btn" id="applyJsonButton" type="button">Apply JSON</button>
+              </div>
+            </article>
+          </div>
+
+          <article class="detail-card recent-runs-card">
+            <div class="detail-kicker">Recent top-level runs</div>
+            <div class="recent-runs" id="recentRuns"></div>
+          </article>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

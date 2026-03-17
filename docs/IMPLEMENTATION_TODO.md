@@ -10,6 +10,8 @@ This file is updated as major pieces of the system land.
 - [x] FastAPI control API with router-per-capability layout.
 - [x] Worker adapter layer for Codex, ingest, analysis, drafting, publishing, and browser jobs.
 - [x] Prefect flows for daily brief, paper review, browser jobs, and article drafting.
+- [x] Manual `search-report` command backed by Codex CLI sessions with session resume, memo fallback, and revisioned report persistence.
+- [x] Browser runtime wiring: `browser-process` pool target, fail-closed browser flow submission, and browser/CDP environment settings.
 - [x] Thin operator TUI with `../TODO-agentboard` bridge hooks.
 - [x] Local setup/bootstrap script for SQLite, Prefect, work pools, schema install, and service startup.
 - [x] Smoke tests and compile-time verification.

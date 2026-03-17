@@ -36,10 +36,18 @@ class TaskSpec(TimestampMixin, Base):
     id: Mapped[str] = _uuid_pk()
     task_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    flow_name: Mapped[str | None] = mapped_column(String(255))
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     schedule_text: Mapped[str | None] = mapped_column(String(255))
+    timezone: Mapped[str | None] = mapped_column(String(100))
+    work_pool: Mapped[str | None] = mapped_column(String(255))
+    prompt_path: Mapped[str | None] = mapped_column(String(1024))
     status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
+    prefect_deployment_id: Mapped[str | None] = mapped_column(String(36))
+    prefect_deployment_name: Mapped[str | None] = mapped_column(String(255))
+    prefect_deployment_path: Mapped[str | None] = mapped_column(String(255))
+    prefect_deployment_url: Mapped[str | None] = mapped_column(String(2048))
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
     runs: Mapped[list["RunRecord"]] = relationship(back_populates="task_spec")
@@ -137,6 +145,10 @@ class Entity(TimestampMixin, Base):
 
 class Report(TimestampMixin, Base):
     __tablename__ = "report"
+    __table_args__ = (
+        Index("ix_report_series_revision", "report_series_id", "revision_number"),
+        Index("ix_report_series_current", "report_series_id", "is_current"),
+    )
 
     id: Mapped[str] = _uuid_pk()
     run_id: Mapped[str | None] = mapped_column(ForeignKey("run.id"))
@@ -145,6 +157,10 @@ class Report(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     content_markdown: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    report_series_id: Mapped[str | None] = mapped_column(String(255))
+    revision_number: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    supersedes_report_id: Mapped[str | None] = mapped_column(ForeignKey("report.id"))
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     score: Mapped[float | None] = mapped_column(Numeric(8, 3))
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

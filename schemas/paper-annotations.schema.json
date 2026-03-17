@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/paper-annotations.schema.json",
+  "title": "Paper Annotations",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "paper",
+    "concepts",
+    "blocks",
+    "annotations"
+  ],
+  "properties": {
+    "paper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_id",
+        "title",
+        "source_url",
+        "source_kind"
+      ],
+      "properties": {
+        "paper_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "source_kind": {
+          "type": "string",
+          "enum": [
+            "arxiv_html",
+            "arxiv_text"
+          ]
+        }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "concept_id",
+          "name",
+          "summary",
+          "perspectives"
+        ],
+        "properties": {
+          "concept_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "perspectives": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cs50_student",
+              "senior_engineer",
+              "staff_ml_engineer"
+            ],
+            "properties": {
+              "cs50_student": {
+                "type": "string",
+                "minLength": 1
+              },
+              "senior_engineer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "staff_ml_engineer": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "block_id",
+          "section_label",
+          "order",
+          "text"
+        ],
+        "properties": {
+          "block_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "section_label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "annotation_id",
+          "block_id",
+          "anchor_text",
+          "label",
+          "kind",
+          "analysis",
+          "concept_ids",
+          "confidence",
+          "evidence"
+        ],
+        "properties": {
+          "annotation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "block_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "anchor_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "extracted_claim",
+              "model_inference",
+              "mechanistic_explanation",
+              "method_detail",
+              "limitation",
+              "implication"
+            ]
+          },
+          "analysis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "concept_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "quote",
+                "reason"
+              ],
+              "properties": {
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_ref": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

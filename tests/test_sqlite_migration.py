@@ -362,14 +362,19 @@ class SQLiteMigrationTests(unittest.TestCase):
         target_metadata.reflect(bind=self.target_engine)
         run_table = target_metadata.tables["run"]
         chunk_table = target_metadata.tables["chunk"]
+        report_table = target_metadata.tables["report"]
 
         with self.target_engine.connect() as connection:
             run_row = connection.execute(run_table.select()).mappings().one()
             chunk_row = connection.execute(chunk_table.select()).mappings().one()
+            report_row = connection.execute(report_table.select()).mappings().one()
 
         self.assertEqual(run_row["prefect_flow_run_id"], "prefect-123")
         self.assertEqual(run_row["input_payload"], {"paper_id": "paper-1"})
         self.assertEqual(chunk_row["embedding"], [0.1, 0.2, 0.3])
+        self.assertEqual(report_row["report_series_id"], "report-1")
+        self.assertEqual(report_row["revision_number"], 1)
+        self.assertTrue(report_row["is_current"])
 
     def test_validate_migration_counts_raises_for_mismatch(self) -> None:
         with self.assertRaises(RuntimeError):

@@ -9,6 +9,13 @@ Produce a comprehensive, technically rigorous report that helps me understand:
 - what the evidence establishes
 - what limitations and open questions remain
 
+Audience lenses:
+- `cs50_student`: explain the core mechanism in plain but technically honest language
+- `senior_engineer`: call out implementation choices, systems tradeoffs, and failure modes
+- `staff_ml_engineer`: emphasize model lineage, evaluation quality, and deployment implications
+- Treat the report as if it should still be useful to a serious learner who can follow rigorous detail
+- Keep paper claims and analytical inference separate throughout the report
+
 Important framing rule:
 - Do not assume the document is a standard research paper with a single clearly defined “core problem”.
 - First determine what kind of document this is, such as:
