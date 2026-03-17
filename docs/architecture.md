@@ -5,11 +5,12 @@
 - FastAPI is the front door.
 - Clients issue commands like `daily-brief`, `paper-review`, `browser-job`, and `draft-article`.
 - The API submits Prefect deployments when available and falls back to local execution for bootstrap simplicity.
+- Public request envelopes are flow-oriented; worker-specific request contracts are internal and are built inside flows before adapter execution.
 
 ## Orchestration
 
 - Prefect owns schedules, work pools, deployment registration, and custom events.
-- Workers do not call each other directly.
+- Flows coordinate work across adapters. Some workers may call shared internal utility runners such as the Codex CLI runner, but public orchestration still happens at the flow layer.
 - Shared persistence happens through local SQLite files and the artifact store under `data/`.
 
 ## Data Layer
@@ -30,3 +31,4 @@
 - `mini-process`: default Python subprocess work on the always-on host.
 - `mini-docker`: isolated jobs for containerized collectors and future Playwright work.
 - `mbp-process`: optional laptop worker for ad hoc reruns.
+- Browser automation remains deferred beyond the current scaffolded lane.

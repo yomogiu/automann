@@ -10,12 +10,15 @@ Life System is a local Prefect-first automation stack for:
 ## Stack overview
 
 - `apps/api`: FastAPI control plane for commands, runs, reports, and artifacts
+- `apps/web`: official web frontend mounted by the API at `/`
 - `apps/tui`: operator UI that submits commands and inspects outputs
 - `flows/*`: Prefect flows and deployment wiring
 - `workers/*`: typed adapters for ingestion, analysis, drafting, browser, Codex, and publishing jobs
 - `libs/*`: shared contracts, DB helpers, retrieval + prompts, and GitHub publish utilities
 - `infra/*`: legacy Postgres bootstrap references and Prefect-related infrastructure notes
 - `scripts/*`: local stack setup and runtime helpers
+
+Public API requests remain flow-oriented. Runner-specific worker contracts live in `libs/contracts/workers.py` and are used internally by flows when they hand work to adapters.
 
 ## Requirements
 
@@ -55,6 +58,7 @@ scripts/setup_local_stack.sh
 
 4. Open the operator tools:
 
+- Web UI: `http://127.0.0.1:8000/`
 - API Swagger: `http://127.0.0.1:8000/docs`
 - Prefect UI: value of `LIFE_PREFECT_UI_URL` in `.env` (default `http://127.0.0.1:4200`)
 - TUI:
@@ -93,6 +97,8 @@ Useful script variants:
 
 - `scripts/run_prefect_worker.sh mini-docker docker` for the browser lane
 - `scripts/run_prefect_worker.sh mbp-process process` for ad hoc laptop workers
+
+The browser lane remains intentionally shallow for now; the deeper Playwright/profile design is still deferred.
 
 ## API commands
 

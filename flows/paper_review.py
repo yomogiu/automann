@@ -33,6 +33,37 @@ def paper_review_flow(request: dict[str, Any], run_id: str | None = None) -> dic
             parent_run_id=run_id,
         )
 
+        artifacts_by_kind = {
+            str(item.get("kind") or ""): item
+            for item in review_result.get("artifacts", [])
+            if isinstance(item, dict)
+        }
+        annotation_artifact = artifacts_by_kind.get("paper-annotations")
+        html_artifact = artifacts_by_kind.get("annotated-paper")
+        if isinstance(review_result.get("structured_outputs"), dict):
+            review_result["structured_outputs"]["annotation_json_artifact_id"] = (
+                annotation_artifact.get("id") if annotation_artifact else None
+            )
+            review_result["structured_outputs"]["annotated_html_artifact_id"] = (
+                html_artifact.get("id") if html_artifact else None
+            )
+        report_entries = review_result.get("reports", [])
+        if isinstance(report_entries, list):
+            for report_entry in report_entries:
+                if not isinstance(report_entry, dict):
+                    continue
+                report_id = str(report_entry.get("id") or "")
+                metadata = report_entry.get("metadata")
+                if not report_id or not isinstance(metadata, dict):
+                    continue
+                enriched_metadata = {
+                    **metadata,
+                    "annotation_json_artifact_id": annotation_artifact.get("id") if annotation_artifact else None,
+                    "annotated_html_artifact_id": html_artifact.get("id") if html_artifact else None,
+                }
+                updated_report = repository.update_report_metadata(report_id, metadata=enriched_metadata)
+                report_entry["metadata"] = updated_report.metadata_json if updated_report is not None else enriched_metadata
+
         if review_result["artifacts"]:
             artifact_record = next(
                 (item for item in review_result["artifacts"] if item["kind"] == "review-card"),

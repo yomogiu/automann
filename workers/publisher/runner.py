@@ -4,7 +4,6 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from libs.config import Settings
 from libs.contracts.events import EventName
@@ -15,6 +14,7 @@ from libs.contracts.models import (
     WorkerStatus,
 )
 from libs.github_publish import prepare_publication_bundle
+from libs.contracts.workers import PublishOutput, PublishRequest
 
 from workers.common import build_file_artifact
 
@@ -25,28 +25,29 @@ class GitHubPublisher:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def run(
-        self,
-        *,
-        report_path: str,
-        artifact_paths: list[str],
-        metadata: dict[str, Any] | None = None,
-    ) -> AdapterResult:
+    def run(self, request: PublishRequest) -> AdapterResult:
         release_tag = f"{self.settings.github_release_prefix}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
         publication_dir = self.settings.report_root / "generated"
         bundle = prepare_publication_bundle(
             destination_root=publication_dir,
             release_tag=release_tag,
-            report_path=Path(report_path),
-            artifact_paths=[Path(item) for item in artifact_paths],
-            metadata=metadata or {},
+            report_path=Path(request.report_path),
+            artifact_paths=[Path(item) for item in request.artifact_paths],
+            metadata=request.metadata,
         )
 
         stdout = f"Prepared publication bundle {bundle.release_tag}"
         publish_mode = "local-bundle"
+        output = PublishOutput(
+            publish_mode=publish_mode,
+            release_tag=bundle.release_tag,
+            bundle_dir=str(bundle.bundle_dir),
+            manifest_path=str(bundle.manifest_path),
+        )
 
         if shutil.which("gh") and self.settings.github_owner and self.settings.github_repo:
             publish_mode = "github-release"
+            output = output.model_copy(update={"publish_mode": publish_mode})
             cmd = [
                 "gh",
                 "release",
@@ -75,7 +76,7 @@ class GitHubPublisher:
                             media_type="application/json",
                         )
                     ],
-                    structured_outputs={"publish_mode": publish_mode, "release_tag": bundle.release_tag},
+                    structured_outputs=output.model_dump(mode="json"),
                 )
 
         return AdapterResult(
@@ -88,7 +89,7 @@ class GitHubPublisher:
                     media_type="application/json",
                 )
             ],
-            structured_outputs={"publish_mode": publish_mode, "release_tag": bundle.release_tag},
+            structured_outputs=output.model_dump(mode="json"),
             observations=[
                 ObservationRecord(
                     kind="publication_bundle",

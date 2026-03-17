@@ -34,14 +34,31 @@ class SQLiteRepositoryTests(unittest.TestCase):
                         """
                         SELECT name
                         FROM sqlite_master
-                        WHERE name IN ('chunk_fts', 'chunk_fts_ai', 'chunk_fts_ad', 'chunk_fts_au')
+                        WHERE name IN (
+                          'chunk_fts',
+                          'chunk_fts_ai',
+                          'chunk_fts_ad',
+                          'chunk_fts_au',
+                          'report_taxonomy_term',
+                          'report_taxonomy_link'
+                        )
                         """
                     )
                 ).scalars()
             )
 
         self.assertEqual(foreign_keys, 1)
-        self.assertEqual(objects, {"chunk_fts", "chunk_fts_ai", "chunk_fts_ad", "chunk_fts_au"})
+        self.assertEqual(
+            objects,
+            {
+                "chunk_fts",
+                "chunk_fts_ai",
+                "chunk_fts_ad",
+                "chunk_fts_au",
+                "report_taxonomy_term",
+                "report_taxonomy_link",
+            },
+        )
 
     def test_repository_roundtrip_persists_records_and_queries_fts(self) -> None:
         run = self.repository.start_run(
@@ -93,6 +110,9 @@ class SQLiteRepositoryTests(unittest.TestCase):
         self.assertEqual(self.repository.list_runs(limit=5)[0].status, "completed")
         self.assertEqual(len(self.repository.list_artifacts(limit=5)), 1)
         self.assertEqual(len(self.repository.list_reports(limit=5)), 1)
+        taxonomy = self.repository.report_taxonomy_map([persisted.reports[0].id])[persisted.reports[0].id]
+        self.assertEqual(taxonomy.filter_keys, ["report"])
+        self.assertEqual(taxonomy.tag_keys, ["arxiv_paper_analysis"])
 
         chunk_count = self.repository.upsert_chunks(
             artifact_id=artifact.id,

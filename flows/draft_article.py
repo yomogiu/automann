@@ -6,6 +6,7 @@ from prefect import flow
 
 from libs.config import get_settings
 from libs.contracts.models import DraftArticleRequest
+from libs.contracts.workers import DraftGenerationRequest
 from libs.db import LifeRepository, engine_for_url
 from libs.retrieval import RetrievalService
 from workers.draft_runner import DraftWriter
@@ -20,6 +21,12 @@ def substack_draft_flow(request: dict[str, Any], run_id: str | None = None) -> d
     retrieval = RetrievalService(repository)
     draft_request = DraftArticleRequest.model_validate(request)
     evidence_pack = retrieval.query(query=draft_request.theme, limit=8)
+    worker_request = DraftGenerationRequest(
+        theme=draft_request.theme,
+        evidence_pack=evidence_pack,
+        source_report_ids=list(draft_request.report_ids),
+        metadata=dict(draft_request.metadata),
+    )
     runner = DraftWriter(settings)
 
     if run_id is not None:
@@ -29,8 +36,8 @@ def substack_draft_flow(request: dict[str, Any], run_id: str | None = None) -> d
         result = execute_adapter(
             flow_name="substack_draft_flow",
             worker_key=runner.worker_key,
-            input_payload=draft_request.model_dump(mode="json"),
-            runner=lambda: runner.run(draft_request, evidence_pack=evidence_pack),
+            input_payload=worker_request.model_dump(mode="json"),
+            runner=lambda: runner.run(worker_request),
             parent_run_id=run_id,
         )
         if run_id is not None:

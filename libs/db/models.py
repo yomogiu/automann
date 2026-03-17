@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -152,6 +152,38 @@ class Report(TimestampMixin, Base):
     run: Mapped[RunRecord | None] = relationship(back_populates="reports")
     observations: Mapped[list["Observation"]] = relationship(back_populates="report")
     citations: Mapped[list["CitationLink"]] = relationship(back_populates="report")
+    taxonomy_links: Mapped[list["ReportTaxonomyLink"]] = relationship(back_populates="report")
+
+
+class ReportTaxonomyTerm(Base):
+    __tablename__ = "report_taxonomy_term"
+    __table_args__ = (
+        Index("ix_report_taxonomy_term_kind_active_sort", "kind", "active", "sort_order"),
+    )
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    parent_key: Mapped[str | None] = mapped_column(ForeignKey("report_taxonomy_term.key"))
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    report_links: Mapped[list["ReportTaxonomyLink"]] = relationship(back_populates="term")
+
+
+class ReportTaxonomyLink(Base):
+    __tablename__ = "report_taxonomy_link"
+    __table_args__ = (
+        Index("ix_report_taxonomy_link_term_key", "term_key"),
+    )
+
+    report_id: Mapped[str] = mapped_column(ForeignKey("report.id"), primary_key=True)
+    term_key: Mapped[str] = mapped_column(ForeignKey("report_taxonomy_term.key"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    report: Mapped[Report] = relationship(back_populates="taxonomy_links")
+    term: Mapped[ReportTaxonomyTerm] = relationship(back_populates="report_links")
 
 
 class Observation(TimestampMixin, Base):

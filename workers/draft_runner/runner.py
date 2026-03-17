@@ -6,12 +6,12 @@ from libs.config import Settings
 from libs.contracts.events import EventName
 from libs.contracts.models import (
     AdapterResult,
-    DraftArticleRequest,
     EventSuggestion,
     ObservationRecord,
     ReportRecord,
     WorkerStatus,
 )
+from libs.contracts.workers import DraftGenerationOutput, DraftGenerationRequest
 
 from workers.common import build_file_artifact, ensure_worker_dir, write_json, write_text
 
@@ -22,14 +22,28 @@ class DraftWriter:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def run(self, request: DraftArticleRequest, *, evidence_pack: list[dict[str, Any]]) -> AdapterResult:
+    def run(self, request: DraftGenerationRequest) -> AdapterResult:
         run_dir = ensure_worker_dir(self.settings, self.worker_key)
         markdown_path = run_dir / "substack_draft.md"
         bundle_path = run_dir / "source_bundle.json"
+        evidence_pack = list(request.evidence_pack)
+        output = DraftGenerationOutput(
+            theme=request.theme,
+            evidence_count=len(evidence_pack),
+            source_report_ids=list(request.source_report_ids),
+        )
 
         markdown = self._render_draft(request, evidence_pack)
         write_text(markdown_path, markdown)
-        write_json(bundle_path, {"theme": request.theme, "evidence_pack": evidence_pack})
+        write_json(
+            bundle_path,
+            {
+                "theme": request.theme,
+                "evidence_pack": evidence_pack,
+                "source_report_ids": list(request.source_report_ids),
+                "metadata": dict(request.metadata),
+            },
+        )
 
         return AdapterResult(
             status=WorkerStatus.COMPLETED,
@@ -46,12 +60,12 @@ class DraftWriter:
                     media_type="application/json",
                 ),
             ],
-            structured_outputs={"theme": request.theme, "evidence_count": len(evidence_pack)},
+            structured_outputs=output.model_dump(mode="json"),
             observations=[
                 ObservationRecord(
                     kind="draft_theme",
                     summary=f"Draft centered on '{request.theme}'.",
-                    payload={"theme": request.theme, "evidence_count": len(evidence_pack)},
+                    payload=output.model_dump(mode="json"),
                     confidence=0.75,
                 )
             ],
@@ -62,7 +76,14 @@ class DraftWriter:
                     summary=f"Generated long-form draft from {len(evidence_pack)} evidence items.",
                     content_markdown=markdown,
                     artifact_path=str(markdown_path),
-                    metadata={"theme": request.theme},
+                    metadata={
+                        "theme": request.theme,
+                        "source_report_ids": list(request.source_report_ids),
+                        "taxonomy": {
+                            "filters": ["report"],
+                            "tags": ["deep_research"],
+                        },
+                    },
                 )
             ],
             next_suggested_events=[
@@ -70,7 +91,7 @@ class DraftWriter:
             ],
         )
 
-    def _render_draft(self, request: DraftArticleRequest, evidence_pack: list[dict[str, Any]]) -> str:
+    def _render_draft(self, request: DraftGenerationRequest, evidence_pack: list[dict[str, Any]]) -> str:
         lines = [
             f"# {request.theme}",
             "",

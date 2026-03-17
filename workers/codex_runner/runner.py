@@ -4,10 +4,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
-
 from libs.config import Settings
 from libs.contracts.models import AdapterResult, WorkerStatus
+from libs.contracts.workers import CodexTaskOutput, CodexTaskRequest
 
 from workers.common import build_file_artifact, ensure_worker_dir, resolve_worker_output_path, write_text
 
@@ -19,22 +18,8 @@ def load_paper_review_prompt() -> str:
     return PAPER_REVIEW_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-class CodexCliRequest(BaseModel):
-    prompt: str
-    cwd: str | None = None
-    extra_args: list[str] = Field(default_factory=list)
-    output_schema: str | None = None
-    output_path: str | None = None
-
-    @property
-    def structured_mode(self) -> bool:
-        return self.output_schema is not None or self.output_path is not None
-
-    @model_validator(mode="after")
-    def validate_structured_mode(self) -> CodexCliRequest:
-        if (self.output_schema is None) != (self.output_path is None):
-            raise ValueError("output_schema and output_path must be provided together for structured mode")
-        return self
+# Compatibility alias for existing imports and tests.
+CodexCliRequest = CodexTaskRequest
 
 
 class CodexCliRunner:
@@ -53,13 +38,14 @@ class CodexCliRunner:
         if shutil.which("codex") is None:
             text = "Codex CLI is not available in PATH; generated placeholder result."
             write_text(stdout_path, text)
+            output = CodexTaskOutput(mode="placeholder")
             return AdapterResult(
                 status=WorkerStatus.SKIPPED,
                 stdout=text,
                 artifact_manifest=[
                     build_file_artifact(kind="text", path=stdout_path, media_type="text/plain")
                 ],
-                structured_outputs={"mode": "placeholder"},
+                structured_outputs=output.model_dump(mode="json"),
             )
 
         cmd = self._build_command(request)
@@ -78,18 +64,19 @@ class CodexCliRunner:
             if structured_path.exists() and structured_path.is_file():
                 artifacts.append(build_file_artifact(kind="json", path=structured_path, media_type="application/json"))
 
+        output = CodexTaskOutput(
+            returncode=completed.returncode,
+            mode="structured-json" if request.structured_mode else "plain-text",
+            output_schema=request.output_schema,
+            output_path=request.output_path,
+            command=cmd,
+        )
         return AdapterResult(
             status=WorkerStatus.COMPLETED if completed.returncode == 0 else WorkerStatus.FAILED,
             stdout=completed.stdout,
             stderr=completed.stderr,
             artifact_manifest=artifacts,
-            structured_outputs={
-                "returncode": completed.returncode,
-                "mode": "structured-json" if request.structured_mode else "plain-text",
-                "output_schema": request.output_schema,
-                "output_path": request.output_path,
-                "command": cmd,
-            },
+            structured_outputs=output.model_dump(mode="json"),
         )
 
     @staticmethod

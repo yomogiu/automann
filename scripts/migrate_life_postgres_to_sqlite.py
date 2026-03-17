@@ -12,6 +12,7 @@ from sqlalchemy.engine.url import make_url
 
 from libs.config import get_settings
 from libs.db import bootstrap_life_database, engine_for_url, rebuild_chunk_fts
+from libs.db.bootstrap import bootstrap_report_taxonomy
 
 
 TABLE_ORDER = [
@@ -133,6 +134,7 @@ def migrate_life_data(source_engine: Engine, target_engine: Engine) -> dict[str,
                 raise RuntimeError(f"Foreign key validation failed: {fk_issues}")
 
     rebuild_chunk_fts(target_engine)
+    bootstrap_report_taxonomy(target_engine)
     validate_migration_counts(summaries)
     return summaries
 

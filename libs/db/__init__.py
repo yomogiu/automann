@@ -1,4 +1,4 @@
-from .bootstrap import bootstrap_databases, bootstrap_life_database, rebuild_chunk_fts
+from .bootstrap import bootstrap_databases, bootstrap_life_database, bootstrap_report_taxonomy, rebuild_chunk_fts
 from .models import (
     Artifact,
     Base,
@@ -7,6 +7,8 @@ from .models import (
     Entity,
     Observation,
     Report,
+    ReportTaxonomyLink,
+    ReportTaxonomyTerm,
     RunRecord,
     TaskSpec,
 )
@@ -22,10 +24,13 @@ __all__ = [
     "LifeRepository",
     "Observation",
     "Report",
+    "ReportTaxonomyLink",
+    "ReportTaxonomyTerm",
     "RunRecord",
     "TaskSpec",
     "bootstrap_databases",
     "bootstrap_life_database",
+    "bootstrap_report_taxonomy",
     "engine_for_url",
     "rebuild_chunk_fts",
     "session_scope",

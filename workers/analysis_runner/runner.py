@@ -5,6 +5,7 @@ from typing import Any
 
 from libs.config import Settings
 from libs.contracts.models import AdapterResult, ObservationRecord, ReportRecord, WorkerStatus
+from libs.contracts.workers import DailyBriefAnalysisOutput, DailyBriefAnalysisRequest
 
 from workers.common import build_file_artifact, ensure_worker_dir, write_json, write_text
 
@@ -15,23 +16,16 @@ class AnalysisRunner:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def compile_daily_brief(
-        self,
-        *,
-        brief_date: date,
-        news_payload: dict[str, Any],
-        arxiv_payload: dict[str, Any],
-        browser_payload: dict[str, Any] | None,
-        previous_report: dict[str, Any] | None,
-    ) -> AdapterResult:
+    def compile_daily_brief(self, request: DailyBriefAnalysisRequest) -> AdapterResult:
+        brief_date = request.brief_date
         run_dir = ensure_worker_dir(self.settings, self.worker_key)
         markdown_path = run_dir / f"daily_brief_{brief_date.isoformat()}.md"
         manifest_path = run_dir / "analysis_manifest.json"
 
-        news_items = list(news_payload.get("items", []))
-        papers = list(arxiv_payload.get("papers", []))
-        browser_status = browser_payload.get("status") if browser_payload else "n/a"
-        previous_title = previous_report.get("title") if previous_report else "No previous report"
+        news_items = list(request.news_items)
+        papers = list(request.papers)
+        browser_status = request.browser_summary.get("status") if request.browser_summary else "n/a"
+        previous_title = request.previous_report.get("title") if request.previous_report else "No previous report"
 
         markdown = self._render_daily_brief(
             brief_date=brief_date,
@@ -41,13 +35,14 @@ class AnalysisRunner:
             previous_title=previous_title,
         )
         write_text(markdown_path, markdown)
-        manifest = {
-            "brief_date": brief_date.isoformat(),
-            "news_count": len(news_items),
-            "paper_count": len(papers),
-            "browser_status": browser_status,
-            "previous_report_title": previous_title,
-        }
+        output = DailyBriefAnalysisOutput(
+            brief_date=brief_date.isoformat(),
+            news_count=len(news_items),
+            paper_count=len(papers),
+            browser_status=browser_status,
+            previous_report_title=previous_title,
+        )
+        manifest = output.model_dump(mode="json")
         write_json(manifest_path, manifest)
 
         observations = [
@@ -89,7 +84,13 @@ class AnalysisRunner:
                     summary=f"{len(news_items)} news items, {len(papers)} papers, browser lane {browser_status}.",
                     content_markdown=markdown,
                     artifact_path=str(markdown_path),
-                    metadata=manifest,
+                    metadata={
+                        **manifest,
+                        "taxonomy": {
+                            "filters": ["daily"],
+                            "tags": ["synthesis", "scrapes"],
+                        },
+                    },
                 )
             ],
         )

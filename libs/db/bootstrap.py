@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
 from libs.config import Settings
+from libs.report_taxonomy import REPORT_TAXONOMY_TERMS
 
-from .models import Base
+from .models import Base, ReportTaxonomyTerm
+from .repository import LifeRepository
 from .session import engine_for_url
 
 
@@ -68,11 +71,37 @@ def _bootstrap_sqlite_support(engine: Engine) -> None:
     rebuild_chunk_fts(engine)
 
 
+def bootstrap_report_taxonomy(engine: Engine) -> None:
+    with engine.begin() as connection:
+        existing_keys = set(connection.execute(select(ReportTaxonomyTerm.key)).scalars())
+        for term in REPORT_TAXONOMY_TERMS:
+            payload = {
+                "label": term.label,
+                "kind": term.kind,
+                "parent_key": term.parent_key,
+                "description": term.description,
+                "sort_order": term.sort_order,
+                "active": True,
+            }
+            if term.key in existing_keys:
+                connection.execute(
+                    ReportTaxonomyTerm.__table__.update()
+                    .where(ReportTaxonomyTerm.key == term.key)
+                    .values(**payload)
+                )
+            else:
+                connection.execute(
+                    ReportTaxonomyTerm.__table__.insert().values(key=term.key, **payload)
+                )
+    LifeRepository(engine).backfill_report_taxonomy()
+
+
 def bootstrap_life_database(settings: Settings) -> None:
     _ensure_sqlite_parent(settings.life_database_url)
     engine = engine_for_url(settings.life_database_url)
     Base.metadata.create_all(engine)
     _bootstrap_sqlite_support(engine)
+    bootstrap_report_taxonomy(engine)
 
 
 def bootstrap_databases(settings: Settings) -> None:

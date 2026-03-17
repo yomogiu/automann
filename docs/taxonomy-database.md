@@ -82,7 +82,10 @@ When creating `AdapterResult`:
 
 1. Build artifacts through `build_file_artifact(...)` when possible so `path`, `storage_uri`, `sha256` are normalized.
 2. Put output files under `ensure_worker_dir(...)` outputs.
-3. For reports, use stable `metadata` shape:
+3. Build a typed worker output model first when a worker contract exists, then store `structured_outputs=output.model_dump(mode="json")`.
+4. For reports, use stable `metadata` shape:
    - include any required display fields in `metadata` (for example `presentation_mode`, `source_kind`),
+   - keep `daily_brief` metadata aligned with `brief_date`, `news_count`, `paper_count`, `browser_status`, and `previous_report_title`,
+   - keep `substack_draft` metadata aligned with `theme` plus any source-report identifiers used to assemble the draft,
    - include `metadata.taxonomy.filters` / `metadata.taxonomy.tags` only with known keys.
-4. Keep `report_type` values aligned with taxonomy expectations (`paper_review`, `daily_brief`, `substack_draft`, etc.).
+5. Keep `report_type` values aligned with taxonomy expectations (`paper_review`, `daily_brief`, `substack_draft`, etc.).

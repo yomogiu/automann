@@ -38,5 +38,8 @@ include-package-data = true
 where = ["."]
 include = ["apps*", "workers*", "libs*", "flows*"]
 
+[tool.setuptools.package-data]
+"apps.web" = ["static/*.html", "static/*.css", "static/*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

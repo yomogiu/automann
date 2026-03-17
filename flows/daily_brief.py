@@ -7,6 +7,12 @@ from prefect import flow
 
 from libs.config import get_settings
 from libs.contracts.models import BrowserJobRequest, DailyBriefRequest
+from libs.contracts.workers import (
+    ArxivFeedIngestRequest,
+    DailyBriefAnalysisRequest,
+    NewsIngestRequest,
+    PublishRequest,
+)
 from libs.db import LifeRepository, engine_for_url
 from workers.analysis_runner import AnalysisRunner
 from workers.browser_runner import BrowserTaskRunner
@@ -22,6 +28,16 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
     repository = LifeRepository(engine_for_url(settings.life_database_url))
     brief_request = DailyBriefRequest.model_validate(request or {})
     brief_date = (brief_request.date or datetime.now(timezone.utc)).date()
+    news_request = NewsIngestRequest(
+        brief_date=brief_date,
+        seed_news=list(brief_request.metadata.get("seed_news") or []),
+        metadata=dict(brief_request.metadata),
+    )
+    arxiv_request = ArxivFeedIngestRequest(
+        brief_date=brief_date,
+        seed_arxiv=list(brief_request.metadata.get("seed_arxiv") or []),
+        metadata=dict(brief_request.metadata),
+    )
 
     if run_id is not None:
         repository.update_run_status(run_id, status="running")
@@ -36,15 +52,15 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
         news_result = execute_adapter(
             flow_name="daily_brief_flow",
             worker_key=news_runner.worker_key,
-            input_payload=brief_request.model_dump(mode="json"),
-            runner=lambda: news_runner.run(brief_request),
+            input_payload=news_request.model_dump(mode="json"),
+            runner=lambda: news_runner.run(news_request),
             parent_run_id=run_id,
         )
         arxiv_result = execute_adapter(
             flow_name="daily_brief_flow",
             worker_key=arxiv_runner.worker_key,
-            input_payload=brief_request.model_dump(mode="json"),
-            runner=lambda: arxiv_runner.ingest_feed(brief_request),
+            input_payload=arxiv_request.model_dump(mode="json"),
+            runner=lambda: arxiv_runner.ingest_feed(arxiv_request),
             parent_run_id=run_id,
         )
         browser_result = execute_adapter(
@@ -61,22 +77,23 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
         )
 
         latest_report = repository.latest_report("daily_brief")
+        analysis_request = DailyBriefAnalysisRequest(
+            brief_date=brief_date,
+            news_items=list(news_result.get("structured_outputs", {}).get("items", [])),
+            papers=list(arxiv_result.get("structured_outputs", {}).get("papers", [])),
+            browser_summary=browser_result.get("structured_outputs"),
+            previous_report={
+                "id": latest_report.id,
+                "title": latest_report.title,
+            }
+            if latest_report
+            else None,
+        )
         analysis_result = execute_adapter(
             flow_name="daily_brief_flow",
             worker_key=analysis_runner.worker_key,
-            input_payload={"date": brief_date.isoformat()},
-            runner=lambda: analysis_runner.compile_daily_brief(
-                brief_date=brief_date,
-                news_payload=news_result["structured_outputs"],
-                arxiv_payload=arxiv_result["structured_outputs"],
-                browser_payload=browser_result["structured_outputs"],
-                previous_report={
-                    "id": latest_report.id,
-                    "title": latest_report.title,
-                }
-                if latest_report
-                else None,
-            ),
+            input_payload=analysis_request.model_dump(mode="json"),
+            runner=lambda: analysis_runner.compile_daily_brief(analysis_request),
             parent_run_id=run_id,
         )
 
@@ -84,15 +101,16 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
         if brief_request.publish and analysis_result["artifacts"]:
             report_path = analysis_result["artifacts"][0]["path"]
             artifact_paths = [item["path"] for item in news_result["artifacts"] + arxiv_result["artifacts"]]
+            publish_request = PublishRequest(
+                report_path=report_path,
+                artifact_paths=artifact_paths,
+                metadata={"brief_date": brief_date.isoformat()},
+            )
             published = execute_adapter(
                 flow_name="daily_brief_flow",
                 worker_key=publisher.worker_key,
-                input_payload={"report_path": report_path},
-                runner=lambda: publisher.run(
-                    report_path=report_path,
-                    artifact_paths=artifact_paths,
-                    metadata={"brief_date": brief_date.isoformat()},
-                ),
+                input_payload=publish_request.model_dump(mode="json"),
+                runner=lambda: publisher.run(publish_request),
                 parent_run_id=run_id,
             )
 
