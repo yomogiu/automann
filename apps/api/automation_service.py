@@ -563,6 +563,7 @@ class AutomationService:
             return parameters
 
         if automation_type == AutomationType.SEARCH_REPORT:
+            parameters.update(payload)
             parameters["prompt"] = self._compose_search_prompt(
                 automation_title=automation_title,
                 payload=payload,
@@ -581,12 +582,16 @@ class AutomationService:
         queries = [str(item).strip() for item in payload.get("queries") or [] if str(item).strip()]
         enabled_sources = [str(item).strip() for item in payload.get("enabled_sources") or [] if str(item).strip()]
         metadata = dict(payload.get("metadata") or {})
+        planner_enabled = bool(payload.get("planner_enabled", True))
+        max_results_per_query = int(payload.get("max_results_per_query") or 8)
         instructions = (prompt_body or _DEFAULT_SEARCH_PROMPT).strip()
         lines = [
             "# Scheduled Search Report",
             "",
             f"Title: {automation_title}",
             f"Theme: {theme or 'None'}",
+            f"Planner enabled: {'yes' if planner_enabled else 'no'}",
+            f"Max results per query: {max_results_per_query}",
             "",
             "Queries:",
         ]

@@ -51,6 +51,7 @@ class ArtifactIngestFlowTests(unittest.TestCase):
         source_type: str = "markdown",
         title: str | None = None,
         warning_codes: list[str] | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> AdapterResult:
         output_dir = self.root / "worker-results" / prefix
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +76,11 @@ class ArtifactIngestFlowTests(unittest.TestCase):
             "warning_codes": warning_codes or [],
             "title": title or "Artifact ingest item",
             "tags": [source_type],
-            "metadata": {"source_type": source_type, "tags": [source_type]},
+            "metadata": {
+                "source_type": source_type,
+                "tags": [source_type],
+                **dict(metadata or {}),
+            },
             "chunks": [
                 {
                     "ordinal": 0,
@@ -184,6 +189,8 @@ class ArtifactIngestFlowTests(unittest.TestCase):
         assert source_document is not None
         self.assertEqual(source_document.title, "File note")
         self.assertEqual(source_document.current_text_artifact_id, result["items"][0]["normalized_text_artifact_id"])
+        self.assertEqual(source_document.metadata_json["source_profile"]["source_kind"], "institutional_report")
+        self.assertEqual(source_document.metadata_json["source_profile"]["research_domain"], "labor")
 
         hits = self.repository.query_chunks(query="file based ingest", limit=5)
         self.assertEqual([item.text for item in hits], [text])
@@ -249,6 +256,19 @@ class ArtifactIngestFlowTests(unittest.TestCase):
                     text=first_text,
                     source_type="markdown",
                     title="Duplicate note",
+                    metadata={
+                        "source_profile": {
+                            "source_kind": "expert_blog",
+                            "publisher_type": "individual",
+                            "document_scope": "blog_post",
+                            "research_domain": "labor",
+                            "authority_score": 0.65,
+                            "freshness_bucket": "month",
+                            "topics": ["labor"],
+                            "entities": ["Duplicate Note"],
+                            "signal_flags": ["file_source", "first_ingest"],
+                        }
+                    },
                 ),
                 self._build_ingest_result(
                     prefix="duplicate-run-2",
@@ -257,6 +277,19 @@ class ArtifactIngestFlowTests(unittest.TestCase):
                     text=second_text,
                     source_type="markdown",
                     title="Duplicate note",
+                    metadata={
+                        "source_profile": {
+                            "source_kind": "institutional_report",
+                            "publisher_type": "institutional",
+                            "document_scope": "report",
+                            "research_domain": "labor",
+                            "authority_score": 0.8,
+                            "freshness_bucket": "month",
+                            "topics": ["labor"],
+                            "entities": ["Duplicate Note"],
+                            "signal_flags": ["file_source", "second_ingest"],
+                        }
+                    },
                 ),
             ],
         ):
@@ -295,6 +328,8 @@ class ArtifactIngestFlowTests(unittest.TestCase):
         self.assertIsNotNone(source_document)
         assert source_document is not None
         self.assertEqual(source_document.current_text_artifact_id, second_result["items"][0]["normalized_text_artifact_id"])
+        self.assertEqual(source_document.metadata_json["source_profile"]["source_kind"], "institutional_report")
+        self.assertIn("second_ingest", source_document.metadata_json["source_profile"]["signal_flags"])
 
         hits = self.repository.query_chunks(query="alpha beta", limit=10)
         self.assertEqual([item.artifact_id for item in hits], [second_result["items"][0]["normalized_text_artifact_id"]])

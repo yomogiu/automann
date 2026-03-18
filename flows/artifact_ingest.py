@@ -7,6 +7,7 @@ from prefect import flow
 
 from libs.config import get_settings
 from libs.contracts.models import ArtifactIngestRequest
+from libs.retrieval import RetrievalService
 
 from .common import build_repository, execute_adapter
 
@@ -67,6 +68,7 @@ def _item_identity(item: dict[str, Any]) -> tuple[int | None, str]:
             index = None
     canonical_uri = str(
         item.get("canonical_uri")
+        or _as_dict(item.get("metadata")).get("canonical_uri")
         or item.get("source_uri")
         or item.get("url")
         or item.get("file_path")
@@ -210,12 +212,15 @@ def _build_worker_payload(request: ArtifactIngestRequest) -> Any:
     try:
         from libs.contracts import workers as worker_contracts
     except Exception:
-        return {"items": [item.model_dump(mode="json") for item in request.items], "metadata": {}}
+        return {
+            "items": [item.model_dump(mode="json") for item in request.items],
+            "metadata": dict(request.metadata),
+        }
 
     model = getattr(worker_contracts, "ArtifactIngestRequest", None)
     payload = {
         "items": [item.model_dump(mode="json") for item in request.items],
-        "metadata": {},
+        "metadata": dict(request.metadata),
     }
     if model is not None and hasattr(model, "model_validate"):
         try:
@@ -386,6 +391,13 @@ def artifact_ingest_flow(request: dict[str, Any], run_id: str | None = None) -> 
             "warning_count": warning_count,
             "items": merged_items,
         }
+        if success_count > 0:
+            try:
+                sync_warnings = RetrievalService(repository).sync_semantic_index()
+            except Exception:
+                sync_warnings = ["semantic_index_sync_failed"]
+            if sync_warnings:
+                flow_result["semantic_index_warnings"] = list(dict.fromkeys(sync_warnings))
 
         if run_id is not None:
             repository.update_run_status(

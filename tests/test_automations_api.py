@@ -208,6 +208,8 @@ class AutomationsAPITests(unittest.TestCase):
                     "theme": "Semiconductor supply chain",
                     "queries": ["TSMC capacity 2026", "advanced packaging demand"],
                     "enabled_sources": ["local_knowledge", "browser_web"],
+                    "planner_enabled": False,
+                    "max_results_per_query": 3,
                 },
                 "prompt_body": "Use local knowledge first, then verify with web search.",
             },
@@ -226,6 +228,11 @@ class AutomationsAPITests(unittest.TestCase):
         self.assertIn("Scheduled Search Report", deployment["parameters"]["prompt"])
         self.assertIn("Title: Chip Search", deployment["parameters"]["prompt"])
         self.assertIn("1. TSMC capacity 2026", deployment["parameters"]["prompt"])
+        self.assertEqual(deployment["parameters"]["enabled_sources"], ["local_knowledge", "browser_web"])
+        self.assertFalse(deployment["parameters"]["planner_enabled"])
+        self.assertEqual(deployment["parameters"]["max_results_per_query"], 3)
+        self.assertIn("Planner enabled: no", deployment["parameters"]["prompt"])
+        self.assertIn("Max results per query: 3", deployment["parameters"]["prompt"])
         self.assertIn("Important: start fresh and do not resume prior sessions.", deployment["parameters"]["prompt"])
 
         detail = self.client.get(f"/automations/{automation['id']}")
@@ -263,7 +270,6 @@ class AutomationsAPITests(unittest.TestCase):
                 "payload": {
                     "theme": "Semiconductor supply chain",
                     "queries": ["TSMC capacity 2026"],
-                    "enabled_sources": ["local_knowledge"],
                 },
                 "prompt_body": "Prefer local knowledge before broader synthesis.",
             },
@@ -282,6 +288,9 @@ class AutomationsAPITests(unittest.TestCase):
         self.assertIn("Scheduled Search Report", call["parameters"]["prompt"])
         self.assertIn("Title: Market Search", call["parameters"]["prompt"])
         self.assertIn("advanced packaging demand", call["parameters"]["prompt"])
+        self.assertEqual(call["parameters"]["enabled_sources"], ["local_knowledge"])
+        self.assertTrue(call["parameters"]["planner_enabled"])
+        self.assertEqual(call["parameters"]["max_results_per_query"], 8)
 
     def test_legacy_search_automation_get_migrates_without_prefect_metadata(self) -> None:
         legacy_prompt_path = self.root / "automation-prompts" / "legacy-search.md"

@@ -11,6 +11,7 @@ from libs.config import get_settings
 from libs.contracts.models import AdapterResult, ObservationRecord, WorkerStatus
 from libs.contracts.workers import BrowserTaskRequest
 from libs.db import LifeRepository, bootstrap_life_database, engine_for_url
+from workers.common import build_file_artifact
 
 
 class BrowserJobFlowTests(unittest.TestCase):
@@ -81,6 +82,15 @@ class BrowserJobFlowTests(unittest.TestCase):
             status="pending",
         )
         captured: dict[str, object] = {}
+        handoff_capture: dict[str, object] = {}
+        page_path = self.root / "browser-page.html"
+        page_path.write_text("<html><body><h1>Browser Page</h1></body></html>", encoding="utf-8")
+        browser_page_artifact = build_file_artifact(
+            kind="browser-page",
+            path=page_path,
+            media_type="text/html",
+            metadata={"role": "primary_page", "final_url": "https://x.com/home"},
+        )
 
         def fake_browser_run(_runner_self, request: BrowserTaskRequest) -> AdapterResult:
             captured["request"] = request
@@ -91,7 +101,11 @@ class BrowserJobFlowTests(unittest.TestCase):
                     "job_name": request.job_name,
                     "status": "completed",
                     "session_mode": request.session.mode,
+                    "target_url": request.target_url,
+                    "final_url": "https://x.com/home",
+                    "page_title": "X Home",
                 },
+                artifact_manifest=[browser_page_artifact],
                 observations=[
                     ObservationRecord(
                         kind="browser_navigation",
@@ -102,21 +116,59 @@ class BrowserJobFlowTests(unittest.TestCase):
                 ],
             )
 
+        def fake_execute_child_flow(
+            *,
+            flow_name: str,
+            worker_key: str,
+            input_payload: dict,
+            runner,
+            parent_run_id: str | None = None,
+            task_spec_id: str | None = None,
+        ) -> dict:
+            handoff_capture["flow_name"] = flow_name
+            handoff_capture["worker_key"] = worker_key
+            handoff_capture["input_payload"] = input_payload
+            handoff_capture["parent_run_id"] = parent_run_id
+            handoff_capture["task_spec_id"] = task_spec_id
+            return {
+                "run_id": "child-run-1",
+                "parent_run_id": parent_run_id,
+                "task_spec_id": task_spec_id,
+                "status": "completed",
+                "structured_outputs": {
+                    "success_count": 1,
+                    "failure_count": 0,
+                    "warning_count": 0,
+                    "items": [
+                        {
+                            "source_document_id": "source-1",
+                            "status": "completed",
+                            "canonical_uri": "https://x.com/home",
+                        }
+                    ],
+                },
+                "artifacts": [],
+                "observations": [],
+                "reports": [],
+                "next_events": [],
+            }
+
         with patch("flows.browser_job.execute_adapter", side_effect=self._execute_adapter_inline):
             with patch("flows.browser_job.BrowserTaskRunner.run", autospec=True, side_effect=fake_browser_run):
-                result = browser_job_flow.fn(
-                    request={
-                        "job_name": "x-feed",
-                        "target_url": "https://x.com/home",
-                        "session": {"mode": "attach", "cdp_url": "http://127.0.0.1:9222"},
-                        "steps": [{"op": "wait_for", "selector": "main"}],
-                        "extract": [{"name": "first_post", "selector": "article", "kind": "text"}],
-                        "capture_html": False,
-                        "capture_screenshots": True,
-                        "capture": {"html": True, "screenshot": False, "trace": False},
-                    },
-                    run_id=parent.id,
-                )
+                with patch("flows.browser_job.execute_child_flow", side_effect=fake_execute_child_flow):
+                    result = browser_job_flow.fn(
+                        request={
+                            "job_name": "x-feed",
+                            "target_url": "https://x.com/home",
+                            "session": {"mode": "attach", "cdp_url": "http://127.0.0.1:9222"},
+                            "steps": [{"op": "wait_for", "selector": "main"}],
+                            "extract": [{"name": "first_post", "selector": "article", "kind": "text"}],
+                            "capture_html": False,
+                            "capture_screenshots": True,
+                            "capture": {"html": False, "screenshot": False, "trace": False},
+                        },
+                        run_id=parent.id,
+                    )
 
         self.assertEqual(result["status"], "completed")
         self.assertIsInstance(captured["request"], BrowserTaskRequest)
@@ -124,14 +176,81 @@ class BrowserJobFlowTests(unittest.TestCase):
         assert isinstance(request, BrowserTaskRequest)
         self.assertEqual(request.session.mode, "attach")
         self.assertEqual(request.session.cdp_url, "http://127.0.0.1:9222")
-        self.assertEqual(request.capture.html, True)
+        self.assertEqual(request.capture.html, False)
         self.assertEqual(request.capture.screenshot, False)
         self.assertEqual(request.steps[0].op, "wait_for")
         self.assertEqual(request.extract[0].name, "first_post")
+        self.assertEqual(handoff_capture["flow_name"], "artifact_ingest_flow")
+        self.assertEqual(handoff_capture["worker_key"], "artifact_ingest_runner")
+        self.assertEqual(handoff_capture["parent_run_id"], parent.id)
+        self.assertEqual(handoff_capture["input_payload"]["items"][0]["canonical_uri"], "https://x.com/home")
+        self.assertEqual(handoff_capture["input_payload"]["items"][0]["file_path"], str(page_path.resolve()))
+        self.assertEqual(handoff_capture["input_payload"]["items"][0]["metadata"]["browser_artifact_kind"], "browser-page")
+        self.assertEqual(handoff_capture["input_payload"]["metadata"]["final_url"], "https://x.com/home")
 
         stored_parent = self.repository.get_run(parent.id)
         assert stored_parent is not None
         self.assertEqual(stored_parent.status, "completed")
         self.assertEqual(stored_parent.structured_outputs["structured_outputs"]["session_mode"], "attach")
+        self.assertEqual(stored_parent.structured_outputs["structured_outputs"]["ingest_handoff"]["status"], "completed")
+        self.assertEqual(
+            stored_parent.structured_outputs["structured_outputs"]["ingest_handoff"]["source_document_ids"],
+            ["source-1"],
+        )
         self.assertEqual(stored_parent.observation_summary[0]["kind"], "browser_navigation")
+        self.assertEqual(stored_parent.observation_summary[-1]["kind"], "artifact_ingest_handoff_completed")
 
+    def test_browser_handoff_failure_keeps_parent_completed(self) -> None:
+        parent = self.repository.start_run(
+            flow_name="browser_job_flow",
+            worker_key="browser-process",
+            input_payload={"job_name": "x-feed", "target_url": "https://x.com/home"},
+            status="pending",
+        )
+        page_path = self.root / "browser-page.html"
+        page_path.write_text("<html><body><h1>Browser Page</h1></body></html>", encoding="utf-8")
+        browser_page_artifact = build_file_artifact(
+            kind="browser-page",
+            path=page_path,
+            media_type="text/html",
+            metadata={"role": "primary_page", "final_url": "https://x.com/home"},
+        )
+
+        def fake_browser_run(_runner_self, request: BrowserTaskRequest) -> AdapterResult:
+            return AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                stdout="browser run complete",
+                structured_outputs={
+                    "job_name": request.job_name,
+                    "status": "completed",
+                    "session_mode": request.session.mode,
+                    "target_url": request.target_url,
+                    "final_url": "https://x.com/home",
+                    "page_title": "X Home",
+                },
+                artifact_manifest=[browser_page_artifact],
+                observations=[],
+            )
+
+        with patch("flows.browser_job.execute_adapter", side_effect=self._execute_adapter_inline):
+            with patch("flows.browser_job.BrowserTaskRunner.run", autospec=True, side_effect=fake_browser_run):
+                with patch("flows.browser_job.execute_child_flow", side_effect=RuntimeError("ingest unavailable")):
+                    result = browser_job_flow.fn(
+                        request={
+                            "job_name": "x-feed",
+                            "target_url": "https://x.com/home",
+                            "session": {"mode": "attach", "cdp_url": "http://127.0.0.1:9222"},
+                            "capture": {"html": False, "screenshot": False, "trace": False},
+                        },
+                        run_id=parent.id,
+                    )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["structured_outputs"]["ingest_handoff"]["status"], "failed")
+        self.assertEqual(result["structured_outputs"]["ingest_handoff"]["reason"], "handoff_error")
+
+        stored_parent = self.repository.get_run(parent.id)
+        assert stored_parent is not None
+        self.assertEqual(stored_parent.status, "completed")
+        self.assertEqual(stored_parent.structured_outputs["structured_outputs"]["ingest_handoff"]["status"], "failed")
+        self.assertEqual(stored_parent.observation_summary[-1]["kind"], "artifact_ingest_handoff_failed")

@@ -140,8 +140,20 @@ class OrchestrationService:
             "result": result,
         }
 
-    def query_knowledge(self, *, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        return self.retrieval.query(query=query, limit=limit)
+    def query_knowledge(
+        self,
+        *,
+        query: str,
+        limit: int = 10,
+        include_semantic: bool = True,
+        include_lexical: bool = True,
+    ) -> dict[str, Any]:
+        return self.retrieval.query_with_details(
+            query=query,
+            limit=limit,
+            include_semantic=include_semantic,
+            include_lexical=include_lexical,
+        )
 
     def list_runs(self, *, limit: int = 25) -> list[RunSummary]:
         return [

@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://127.0.0.1:11434")
     agentboard_path: Path = Field(default=ROOT_DIR.parent / "TODO-agentboard")
     embedding_dimensions: int = Field(default=1536)
+    qmd_enabled: bool = Field(default=False)
+    qmd_command: str = Field(default="qmd")
+    qmd_workspace: Path | None = Field(default=None)
+    qmd_index_root: Path = Field(default_factory=lambda: _automann_root() / "runtime" / "qmd")
 
 
 def get_settings() -> Settings:

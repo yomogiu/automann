@@ -101,7 +101,15 @@ def query_knowledge(
     request: QueryKnowledgeRequest,
     orchestration: OrchestrationService = Depends(orchestration_dep),
 ) -> dict:
+    payload = orchestration.query_knowledge(
+        query=request.query,
+        limit=request.limit,
+        include_semantic=request.include_semantic,
+        include_lexical=request.include_lexical,
+    )
     return {
         "query": request.query,
-        "results": orchestration.query_knowledge(query=request.query, limit=request.limit),
+        "mode": payload.get("mode"),
+        "warnings": payload.get("warnings", []),
+        "results": payload.get("results", []),
     }

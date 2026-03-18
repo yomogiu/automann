@@ -50,6 +50,7 @@ class ArtifactIngestItemRequest(WorkerContract):
     content: str | None = None
     content_format: Literal["text", "markdown", "html"] | None = None
     declared_media_type: str | None = None
+    canonical_uri: str | None = None
     title: str | None = None
     author: str | None = None
     published_at: datetime | None = None

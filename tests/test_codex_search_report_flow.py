@@ -112,12 +112,69 @@ class CodexSearchReportFlowTests(unittest.TestCase):
             "next_events": [item.model_dump(mode="json") for item in result.next_suggested_events],
         }
 
+    def _execute_child_flow_stub(
+        self,
+        *,
+        flow_name: str,
+        worker_key: str,
+        input_payload: dict,
+        runner,
+        parent_run_id: str | None = None,
+        task_spec_id: str | None = None,
+    ) -> dict:
+        del worker_key, runner, task_spec_id
+        if flow_name == "artifact_ingest_flow":
+            items = list(input_payload.get("items") or [])
+            return {
+                "run_id": "child-ingest",
+                "parent_run_id": parent_run_id,
+                "task_spec_id": None,
+                "status": "completed",
+                "structured_outputs": {
+                    "success_count": len(items),
+                    "failure_count": 0,
+                    "warning_count": 0,
+                    "items": [
+                        {
+                            "input_index": index,
+                            "status": "completed",
+                            "canonical_uri": item.get("canonical_uri") or item.get("url"),
+                            "source_document_id": f"source-{index + 1}",
+                        }
+                        for index, item in enumerate(items)
+                    ],
+                },
+                "artifacts": [],
+                "observations": [],
+                "reports": [],
+                "next_events": [],
+            }
+        if flow_name == "browser_job_flow":
+            return {
+                "run_id": "child-browser",
+                "parent_run_id": parent_run_id,
+                "task_spec_id": None,
+                "status": "completed",
+                "structured_outputs": {
+                    "ingest_handoff": {
+                        "status": "completed",
+                        "source_document_ids": ["source-browser"],
+                    }
+                },
+                "artifacts": [],
+                "observations": [],
+                "reports": [],
+                "next_events": [],
+            }
+        raise AssertionError(f"unexpected child flow: {flow_name}")
+
     def _session_result(
         self,
         *,
         run_number: int,
         title: str,
         session_id: str | None,
+        sources: list[dict[str, str]] | None = None,
         mode: str = "fresh",
         status: WorkerStatus = WorkerStatus.COMPLETED,
         error_reason: str | None = None,
@@ -140,7 +197,9 @@ class CodexSearchReportFlowTests(unittest.TestCase):
                         "open_questions": [],
                         "suggested_followup_prompt": f"Improve {title}",
                         "needs_user_input": False,
-                        "sources": [{"title": "Source", "url": "https://example.invalid", "note": "note"}],
+                        "sources": sources
+                        if sources is not None
+                        else [{"title": "Source", "url": "https://example.invalid", "note": "note"}],
                     }
                 ),
                 encoding="utf-8",
@@ -197,20 +256,25 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         )
 
         with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
-            with patch(
-                "flows.codex_search_report._load_session_runner",
-                return_value=(fake_runner, CodexSearchSessionRequest),
-            ):
-                result = codex_search_report_flow.fn(
-                    request={"prompt": "Create a 10 day Tokyo itinerary"},
-                    run_id=parent.id,
-                )
+            with patch("flows.codex_search_report.execute_child_flow", side_effect=self._execute_child_flow_stub):
+                with patch(
+                    "flows.codex_search_report._load_session_runner",
+                    return_value=(fake_runner, CodexSearchSessionRequest),
+                ):
+                    result = codex_search_report_flow.fn(
+                        request={"prompt": "Create a 10 day Tokyo itinerary"},
+                        run_id=parent.id,
+                    )
 
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["codex"]["session_id"], "66666666-6666-6666-6666-666666666666")
         self.assertEqual(result["codex"]["resume_source"], "fresh")
         self.assertEqual(result["report"]["revision_number"], 1)
         self.assertIsNotNone(result["report"]["current_report_id"])
+        self.assertEqual(result["orchestration"]["enabled_sources"], ["local_knowledge"])
+        self.assertTrue(result["orchestration"]["local_knowledge_enabled"])
+        self.assertEqual(result["ingest_handoff"]["status"], "completed")
+        self.assertEqual(result["ingest_handoff"]["ingested_count"], 1)
         self.assertIn("report_path", result["artifacts"])
         self.assertIn("memo_path", result["artifacts"])
 
@@ -219,11 +283,13 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         assert current is not None
         self.assertEqual(current.revision_number, 1)
         self.assertTrue(current.is_current)
+        self.assertEqual(current.metadata_json["orchestration"]["enabled_sources"], ["local_knowledge"])
 
         stored_parent = self.repository.get_run(parent.id)
         assert stored_parent is not None
         self.assertEqual(stored_parent.status, "completed")
         self.assertEqual(stored_parent.structured_outputs["report"]["current_report_id"], current.id)
+        self.assertEqual(stored_parent.structured_outputs["orchestration"]["enabled_sources"], ["local_knowledge"])
 
     def test_fresh_flow_includes_local_retrieval_context_in_prompt(self) -> None:
         parent = self.repository.start_run(
@@ -249,23 +315,183 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         ]
 
         with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
-            with patch(
-                "flows.codex_search_report._load_session_runner",
-                return_value=(fake_runner, CodexSearchSessionRequest),
-            ):
+            with patch("flows.codex_search_report.execute_child_flow", side_effect=self._execute_child_flow_stub):
                 with patch(
-                    "flows.codex_search_report.RetrievalService.query",
-                    autospec=True,
-                    return_value=retrieval_hits,
+                    "flows.codex_search_report._load_session_runner",
+                    return_value=(fake_runner, CodexSearchSessionRequest),
                 ):
-                    result = codex_search_report_flow.fn(
-                        request={"prompt": "Identify jobs at risk from AI."},
-                        run_id=parent.id,
-                    )
+                    with patch(
+                        "flows.codex_search_report.RetrievalService.query",
+                        autospec=True,
+                        return_value=retrieval_hits,
+                    ):
+                        result = codex_search_report_flow.fn(
+                            request={"prompt": "Identify jobs at risk from AI."},
+                            run_id=parent.id,
+                        )
 
         self.assertEqual(result["status"], "completed")
         self.assertIn('"local_retrieval_context": [', fake_runner.requests[0].prompt)
         self.assertIn("Jobs involving repetitive reporting", fake_runner.requests[0].prompt)
+        self.assertIn('"search_context": {', fake_runner.requests[0].prompt)
+        self.assertIn('"orchestration": {', fake_runner.requests[0].prompt)
+        self.assertEqual(result["orchestration"]["enabled_sources"], ["local_knowledge"])
+        self.assertGreaterEqual(result["orchestration"]["local_retrieval_count"], 1)
+
+    def test_browser_only_flow_skips_local_retrieval_and_caps_sources(self) -> None:
+        parent = self.repository.start_run(
+            flow_name="codex_search_report_flow",
+            worker_key="mini-process",
+            input_payload={"prompt": "browser only"},
+            status="pending",
+        )
+        fake_runner = _FakeSessionRunner(
+            lambda request, run_number: self._session_result(
+                run_number=run_number,
+                title="Browser Only",
+                session_id="22222222-2222-2222-2222-222222222222",
+                sources=[
+                    {"title": "One", "url": "https://example.one", "note": "one"},
+                    {"title": "Duplicate one", "url": "https://example.one", "note": "dup"},
+                    {"title": "Two", "url": "https://example.two", "note": "two"},
+                    {"title": "Three", "url": "https://example.three", "note": "three"},
+                    {"title": "Ignored", "url": "ftp://example.three", "note": "bad"},
+                ],
+            )
+        )
+
+        with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
+            with patch("flows.codex_search_report.execute_child_flow", side_effect=self._execute_child_flow_stub):
+                with patch(
+                    "flows.codex_search_report._load_session_runner",
+                    return_value=(fake_runner, CodexSearchSessionRequest),
+                ):
+                    with patch(
+                        "flows.codex_search_report.RetrievalService.query",
+                        autospec=True,
+                        side_effect=AssertionError("local retrieval should not run"),
+                    ):
+                        result = codex_search_report_flow.fn(
+                            request={
+                                "prompt": "Find browser-only sources.",
+                                "enabled_sources": ["browser_web"],
+                                "planner_enabled": False,
+                                "max_results_per_query": 2,
+                            },
+                            run_id=parent.id,
+                        )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["orchestration"]["enabled_sources"], ["browser_web"])
+        self.assertFalse(result["orchestration"]["local_knowledge_enabled"])
+        self.assertEqual(result["orchestration"]["source_count"], 2)
+        self.assertTrue(result["orchestration"]["source_limit_hit"])
+        self.assertEqual([item["url"] for item in result["handoff"]["sources"]], ["https://example.one", "https://example.two"])
+        self.assertEqual(result["ingest_handoff"]["status"], "completed")
+        self.assertEqual(result["ingest_handoff"]["attempted_count"], 2)
+        self.assertEqual(result["ingest_handoff"]["browser_fallback_attempted_count"], 0)
+        self.assertIn('"enabled_sources": [', fake_runner.requests[0].prompt)
+        self.assertIn('"browser_web"', fake_runner.requests[0].prompt)
+        self.assertIn('"planner_enabled": false', fake_runner.requests[0].prompt)
+        self.assertIn('"max_results_per_query": 2', fake_runner.requests[0].prompt)
+
+        current = self.repository.current_report_revision(f"search-report:{parent.id}")
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(current.metadata_json["orchestration"]["enabled_sources"], ["browser_web"])
+        self.assertTrue(current.metadata_json["source_limit_hit"])
+
+    def test_browser_fallback_runs_after_direct_ingest_failure(self) -> None:
+        parent = self.repository.start_run(
+            flow_name="codex_search_report_flow",
+            worker_key="mini-process",
+            input_payload={"prompt": "browser fallback"},
+            status="pending",
+        )
+        fake_runner = _FakeSessionRunner(
+            lambda request, run_number: self._session_result(
+                run_number=run_number,
+                title="Fallback Search",
+                session_id="33333333-3333-3333-3333-333333333333",
+                sources=[{"title": "JS Page", "url": "https://example.com/js", "note": "dynamic"}],
+            )
+        )
+        child_calls: list[tuple[str, dict]] = []
+
+        def child_flow_side_effect(
+            *,
+            flow_name: str,
+            worker_key: str,
+            input_payload: dict,
+            runner,
+            parent_run_id: str | None = None,
+            task_spec_id: str | None = None,
+        ) -> dict:
+            del worker_key, runner, task_spec_id
+            child_calls.append((flow_name, input_payload))
+            if flow_name == "artifact_ingest_flow":
+                return {
+                    "run_id": "child-ingest",
+                    "parent_run_id": parent_run_id,
+                    "task_spec_id": None,
+                    "status": "completed",
+                    "structured_outputs": {
+                        "success_count": 0,
+                        "failure_count": 1,
+                        "warning_count": 1,
+                        "items": [
+                            {
+                                "input_index": 0,
+                                "status": "failed",
+                                "canonical_uri": "https://example.com/js",
+                            }
+                        ],
+                    },
+                    "artifacts": [],
+                    "observations": [],
+                    "reports": [],
+                    "next_events": [],
+                }
+            if flow_name == "browser_job_flow":
+                return {
+                    "run_id": "child-browser",
+                    "parent_run_id": parent_run_id,
+                    "task_spec_id": None,
+                    "status": "completed",
+                    "structured_outputs": {
+                        "ingest_handoff": {
+                            "status": "completed",
+                            "source_document_ids": ["source-browser-1"],
+                        }
+                    },
+                    "artifacts": [],
+                    "observations": [],
+                    "reports": [],
+                    "next_events": [],
+                }
+            raise AssertionError(f"unexpected child flow: {flow_name}")
+
+        with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
+            with patch("flows.codex_search_report.execute_child_flow", side_effect=child_flow_side_effect):
+                with patch(
+                    "flows.codex_search_report._load_session_runner",
+                    return_value=(fake_runner, CodexSearchSessionRequest),
+                ):
+                    result = codex_search_report_flow.fn(
+                        request={
+                            "prompt": "Fallback browser capture",
+                            "enabled_sources": ["browser_web"],
+                        },
+                        run_id=parent.id,
+                    )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual([item[0] for item in child_calls], ["artifact_ingest_flow", "browser_job_flow"])
+        self.assertEqual(result["ingest_handoff"]["status"], "completed")
+        self.assertEqual(result["ingest_handoff"]["failed_count"], 1)
+        self.assertEqual(result["ingest_handoff"]["browser_fallback_attempted_count"], 1)
+        self.assertEqual(result["ingest_handoff"]["browser_fallback_completed_count"], 1)
+        self.assertEqual(result["ingest_handoff"]["source_document_ids"], ["source-browser-1"])
 
     def test_resume_prefers_prior_run_session_id_and_creates_new_revision(self) -> None:
         fake_runner = _FakeSessionRunner(
@@ -278,34 +504,35 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         )
 
         with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
-            with patch(
-                "flows.codex_search_report._load_session_runner",
-                return_value=(fake_runner, CodexSearchSessionRequest),
-            ):
-                first_parent = self.repository.start_run(
-                    flow_name="codex_search_report_flow",
-                    worker_key="mini-process",
-                    input_payload={"prompt": "tokyo itinerary"},
-                    status="pending",
-                )
-                first_result = codex_search_report_flow.fn(
-                    request={"prompt": "Create a 10 day Tokyo itinerary"},
-                    run_id=first_parent.id,
-                )
-                second_parent = self.repository.start_run(
-                    flow_name="codex_search_report_flow",
-                    worker_key="mini-process",
-                    input_payload={"prompt": "tokyo refine", "resume_from_run_id": first_parent.id},
-                    status="pending",
-                )
-                second_result = codex_search_report_flow.fn(
-                    request={
-                        "prompt": "Refine the itinerary with quieter evenings.",
-                        "resume_from_run_id": first_parent.id,
-                        "codex_session_id": "99999999-9999-9999-9999-999999999999",
-                    },
-                    run_id=second_parent.id,
-                )
+            with patch("flows.codex_search_report.execute_child_flow", side_effect=self._execute_child_flow_stub):
+                with patch(
+                    "flows.codex_search_report._load_session_runner",
+                    return_value=(fake_runner, CodexSearchSessionRequest),
+                ):
+                    first_parent = self.repository.start_run(
+                        flow_name="codex_search_report_flow",
+                        worker_key="mini-process",
+                        input_payload={"prompt": "tokyo itinerary"},
+                        status="pending",
+                    )
+                    first_result = codex_search_report_flow.fn(
+                        request={"prompt": "Create a 10 day Tokyo itinerary"},
+                        run_id=first_parent.id,
+                    )
+                    second_parent = self.repository.start_run(
+                        flow_name="codex_search_report_flow",
+                        worker_key="mini-process",
+                        input_payload={"prompt": "tokyo refine", "resume_from_run_id": first_parent.id},
+                        status="pending",
+                    )
+                    second_result = codex_search_report_flow.fn(
+                        request={
+                            "prompt": "Refine the itinerary with quieter evenings.",
+                            "resume_from_run_id": first_parent.id,
+                            "codex_session_id": "99999999-9999-9999-9999-999999999999",
+                        },
+                        run_id=second_parent.id,
+                    )
 
         self.assertEqual(first_result["report"]["revision_number"], 1)
         self.assertEqual(second_result["report"]["revision_number"], 2)
@@ -335,33 +562,34 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         fake_runner = _FakeSessionRunner(handler)
 
         with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
-            with patch(
-                "flows.codex_search_report._load_session_runner",
-                return_value=(fake_runner, CodexSearchSessionRequest),
-            ):
-                first_parent = self.repository.start_run(
-                    flow_name="codex_search_report_flow",
-                    worker_key="mini-process",
-                    input_payload={"prompt": "eu jobs"},
-                    status="pending",
-                )
-                codex_search_report_flow.fn(
-                    request={"prompt": "Identify EU jobs at risk to AI."},
-                    run_id=first_parent.id,
-                )
-                second_parent = self.repository.start_run(
-                    flow_name="codex_search_report_flow",
-                    worker_key="mini-process",
-                    input_payload={"prompt": "eu jobs refine", "resume_from_run_id": first_parent.id},
-                    status="pending",
-                )
-                second_result = codex_search_report_flow.fn(
-                    request={
-                        "prompt": "Improve the report with more labor-market detail.",
-                        "resume_from_run_id": first_parent.id,
-                    },
-                    run_id=second_parent.id,
-                )
+            with patch("flows.codex_search_report.execute_child_flow", side_effect=self._execute_child_flow_stub):
+                with patch(
+                    "flows.codex_search_report._load_session_runner",
+                    return_value=(fake_runner, CodexSearchSessionRequest),
+                ):
+                    first_parent = self.repository.start_run(
+                        flow_name="codex_search_report_flow",
+                        worker_key="mini-process",
+                        input_payload={"prompt": "eu jobs"},
+                        status="pending",
+                    )
+                    codex_search_report_flow.fn(
+                        request={"prompt": "Identify EU jobs at risk to AI."},
+                        run_id=first_parent.id,
+                    )
+                    second_parent = self.repository.start_run(
+                        flow_name="codex_search_report_flow",
+                        worker_key="mini-process",
+                        input_payload={"prompt": "eu jobs refine", "resume_from_run_id": first_parent.id},
+                        status="pending",
+                    )
+                    second_result = codex_search_report_flow.fn(
+                        request={
+                            "prompt": "Improve the report with more labor-market detail.",
+                            "resume_from_run_id": first_parent.id,
+                        },
+                        run_id=second_parent.id,
+                    )
 
         self.assertIsNone(fake_runner.requests[0].resume_session_id)
         self.assertIsNone(fake_runner.requests[1].resume_session_id)

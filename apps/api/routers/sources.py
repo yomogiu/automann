@@ -48,6 +48,7 @@ def _serialize_artifact(row: Artifact) -> dict:
 
 
 def _serialize_source(row: SourceDocument, *, artifact_count: int) -> dict:
+    metadata = row.metadata_json or {}
     return {
         "id": row.id,
         "canonical_uri": row.canonical_uri,
@@ -56,7 +57,8 @@ def _serialize_source(row: SourceDocument, *, artifact_count: int) -> dict:
         "author": row.author,
         "published_at": row.published_at,
         "current_text_artifact_id": row.current_text_artifact_id,
-        "metadata": row.metadata_json,
+        "metadata": metadata,
+        "source_profile": metadata.get("source_profile"),
         "artifact_count": artifact_count,
         "created_at": row.created_at,
         "updated_at": row.updated_at,

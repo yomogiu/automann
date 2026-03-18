@@ -144,10 +144,19 @@ class ArtifactIngestRunner:
             author = item.author or parsed.author
             published_at = item.published_at or parsed.published_at
             tags = self._merge_tags(item.tags, parsed.auto_tags)
+            source_profile = self._classify_source_profile(
+                item=item,
+                parsed=parsed,
+                canonical_uri=canonical_uri,
+                title=title,
+                author=author,
+                published_at=published_at,
+            )
             metadata = {
                 **dict(item.metadata),
                 "source_type": parsed.source_type,
                 "entities": parsed.entities,
+                "source_profile": source_profile,
             }
 
             raw_path = self._write_raw_source(
@@ -225,6 +234,7 @@ class ArtifactIngestRunner:
                     "source_type": parsed.source_type,
                     "chunk_count": len(parsed.chunk_payloads),
                     "warning_codes": parsed.warning_codes,
+                    "source_profile": source_profile,
                 },
                 confidence=0.7,
             )
@@ -469,6 +479,12 @@ class ArtifactIngestRunner:
         return raw_path
 
     def _canonical_uri(self, item: ArtifactIngestItemRequest, resolved: _ResolvedSource) -> str:
+        override = self._canonical_uri_override(item)
+        if override:
+            parsed_override = urlparse(override)
+            if parsed_override.scheme in {"http", "https", "ws", "wss"}:
+                return self._normalize_url(override)
+            return override
         if item.input_kind == "url":
             return self._normalize_url(str(item.url or ""))
         if item.input_kind == "file":
@@ -478,6 +494,12 @@ class ArtifactIngestRunner:
 
     @staticmethod
     def _fallback_canonical_uri(item: ArtifactIngestItemRequest) -> str:
+        override = ArtifactIngestRunner._canonical_uri_override(item)
+        if override:
+            parsed_override = urlparse(override)
+            if parsed_override.scheme in {"http", "https", "ws", "wss"}:
+                return ArtifactIngestRunner._normalize_url(override)
+            return override
         if item.input_kind == "url":
             return item.url or "url://unknown"
         if item.input_kind == "file":
@@ -485,6 +507,216 @@ class ArtifactIngestRunner:
         content = str(item.content or "").encode("utf-8")
         digest = re.sub(r"[^a-f0-9]", "", content.hex())[:64]
         return f"inline://sha256/{digest or 'unknown'}"
+
+    @staticmethod
+    def _canonical_uri_override(item: ArtifactIngestItemRequest) -> str | None:
+        value = getattr(item, "canonical_uri", None)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+        metadata = dict(item.metadata or {})
+        value = str(metadata.get("canonical_uri") or metadata.get("source_uri") or "").strip()
+        if value:
+            return value
+        return None
+
+    def _classify_source_profile(
+        self,
+        *,
+        item: ArtifactIngestItemRequest,
+        parsed: _ParsedContent,
+        canonical_uri: str,
+        title: str | None,
+        author: str | None,
+        published_at: datetime | None,
+    ) -> dict[str, Any]:
+        parsed_url = urlparse(canonical_uri)
+        host = parsed_url.netloc.lower().replace("www.", "").strip()
+        path = parsed_url.path.lower().strip()
+        title_text = (title or "").strip()
+        combined_text = " ".join(
+            part
+            for part in (
+                title_text,
+                author or "",
+                canonical_uri,
+                parsed.normalized_text[:2000],
+            )
+            if part
+        ).lower()
+
+        source_kind, publisher_type, document_scope, authority_score, signal_flags = self._infer_source_kind(
+            host=host,
+            path=path,
+            text=combined_text,
+            source_type=parsed.source_type,
+            warning_codes=parsed.warning_codes,
+        )
+        research_domain = self._infer_research_domain(combined_text, host=host, path=path)
+        topics = self._infer_topics(combined_text, research_domain=research_domain)
+        entities = list(dict.fromkeys((parsed.entities or [])[:8]))
+        freshness_bucket = self._freshness_bucket(published_at)
+        if author:
+            signal_flags.append("byline_detected")
+        if published_at is not None:
+            signal_flags.append("published_at_detected")
+        if not title_text:
+            signal_flags.append("untitled_source")
+        if parsed.source_type == "pdf":
+            signal_flags.append("pdf_source")
+        if "html_extraction_fallback" in parsed.warning_codes:
+            signal_flags.append("html_extraction_fallback")
+        if item.input_kind == "inline":
+            signal_flags.append("inline_source")
+        if item.input_kind == "file":
+            signal_flags.append("file_source")
+        if item.input_kind == "url":
+            signal_flags.append("url_source")
+
+        if not topics and research_domain != "general":
+            topics = [research_domain]
+
+        return {
+            "source_kind": source_kind,
+            "publisher_type": publisher_type,
+            "document_scope": document_scope,
+            "research_domain": research_domain,
+            "authority_score": authority_score,
+            "freshness_bucket": freshness_bucket,
+            "topics": topics,
+            "entities": entities,
+            "signal_flags": list(dict.fromkeys(signal_flags)),
+        }
+
+    @staticmethod
+    def _infer_source_kind(
+        *,
+        host: str,
+        path: str,
+        text: str,
+        source_type: str,
+        warning_codes: list[str],
+    ) -> tuple[str, str, str, float, list[str]]:
+        signal_flags: list[str] = []
+        social_hosts = ("x.com", "twitter.com", "threads.net", "linkedin.com", "mastodon.", "bsky.app")
+        newsletter_hosts = ("substack.com", "beehiiv.com", "buttondown.email", "revue.co", "ghost.io")
+        official_hosts = (
+            ".gov",
+            "census.gov",
+            "bls.gov",
+            "eurostat.",
+            "ec.europa.eu",
+            "oecd.org",
+            "worldbank.org",
+            "statcan.gc.ca",
+            "statistics",
+        )
+        academic_hosts = ("arxiv.org", "doi.org", "acm.org", "nature.com", "science.org", "ieee.org", "springer.com")
+        dataset_hosts = ("data.", "datasets.", "catalog.", "ckan.", "open.canada.ca", "data.gov")
+        company_hosts = ("research.", "labs.", "blog.", "medium.com", "substack.com")
+
+        lower_text = text.lower()
+        lower_path = path.lower()
+        if warning_codes:
+            signal_flags.extend(f"warning:{code}" for code in warning_codes if str(code).strip())
+
+        def host_matches(candidates: tuple[str, ...]) -> bool:
+            return any(candidate in host for candidate in candidates)
+
+        if host_matches(social_hosts) or any(keyword in lower_path for keyword in ("/status/", "/posts/", "/thread")):
+            signal_flags.append("social_host")
+            return "social_post", "social", "post", 0.45, signal_flags
+
+        if host_matches(official_hosts) or any(keyword in lower_text for keyword in ("statistics", "statistical", "census", "labor force", "employment")):
+            signal_flags.append("official_statistics_source")
+            if "report" in lower_text or "release" in lower_text:
+                signal_flags.append("official_release")
+            return "official_stats", "official", "statistical_release", 0.95, signal_flags
+
+        if host_matches(academic_hosts) or "preprint" in lower_text or "paper" in lower_text or source_type == "pdf":
+            signal_flags.append("academic_source")
+            return "paper", "academic", "paper", 0.9, signal_flags
+
+        if host_matches(dataset_hosts) or any(keyword in lower_text for keyword in ("dataset", "data dictionary", "download csv", "download xlsx")):
+            signal_flags.append("dataset_source")
+            return "dataset", "data_portal", "dataset", 0.88, signal_flags
+
+        if host_matches(newsletter_hosts) or any(keyword in lower_text for keyword in ("newsletter", "substack", "issue #", "daily brief")):
+            signal_flags.append("newsletter_source")
+            return "newsletter", "newsletter", "newsletter", 0.75, signal_flags
+
+        if any(keyword in lower_text for keyword in ("research note", "market research", "model", "analysis", "report")):
+            if host and any(part in host for part in company_hosts):
+                signal_flags.append("company_research_source")
+                return "company_research", "company", "research_note", 0.82, signal_flags
+            signal_flags.append("institutional_report_source")
+            return "institutional_report", "institutional", "report", 0.8, signal_flags
+
+        if host and any(part in host for part in ("blog.", "medium.com", "substack.com")):
+            signal_flags.append("expert_blog_source")
+            return "expert_blog", "individual", "blog_post", 0.68, signal_flags
+
+        signal_flags.append("general_web_source")
+        return "general_web", "web", "article", 0.58, signal_flags
+
+    @staticmethod
+    def _infer_research_domain(text: str, *, host: str, path: str) -> str:
+        domain_patterns = [
+            ("labor", ("labor", "labour", "employment", "jobs", "workforce", "hiring", "wage")),
+            ("ai", ("artificial intelligence", "ai ", "machine learning", "automation", "llm", "model")),
+            ("economics", ("economy", "economic", "gdp", "inflation", "productivity")),
+            ("policy", ("policy", "regulation", "legislation", "government", "public sector")),
+            ("health", ("health", "medical", "hospital", "clinical", "care")),
+            ("education", ("education", "school", "university", "students", "learning")),
+            ("climate", ("climate", "energy", "emissions", "carbon", "renewable")),
+            ("finance", ("finance", "financial", "markets", "bank", "investment")),
+            ("tech", ("technology", "software", "product", "platform", "semiconductor", "cloud")),
+        ]
+        source_blob = f"{text} {host} {path}"
+        for domain, terms in domain_patterns:
+            if any(term in source_blob for term in terms):
+                return domain
+        return "general"
+
+    @staticmethod
+    def _infer_topics(text: str, *, research_domain: str) -> list[str]:
+        topics: list[str] = []
+        topic_terms = [
+            "ai",
+            "automation",
+            "employment",
+            "labor",
+            "labour",
+            "jobs",
+            "productivity",
+            "statistics",
+            "policy",
+            "climate",
+            "health",
+            "education",
+            "semiconductor",
+            "finance",
+        ]
+        for term in topic_terms:
+            if term in text and term not in topics:
+                topics.append(term)
+        if research_domain != "general" and research_domain not in topics:
+            topics.insert(0, research_domain)
+        return topics[:8]
+
+    @staticmethod
+    def _freshness_bucket(published_at: datetime | None) -> str:
+        if published_at is None:
+            return "unknown"
+        age = datetime.now(timezone.utc) - published_at.astimezone(timezone.utc)
+        if age.days <= 7:
+            return "week"
+        if age.days <= 30:
+            return "month"
+        if age.days <= 365:
+            return "year"
+        return "stale"
 
     @staticmethod
     def _normalize_url(url: str) -> str:

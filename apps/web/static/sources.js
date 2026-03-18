@@ -228,6 +228,12 @@ function renderSourceRow(source) {
 
 function renderSourceTags(source) {
   const tags = [];
+  if (source.source_profile?.source_kind) {
+    tags.push(`<span class="tag">${escapeHTML(String(source.source_profile.source_kind))}</span>`);
+  }
+  if (source.source_profile?.research_domain && source.source_profile.research_domain !== "general") {
+    tags.push(`<span class="tag">${escapeHTML(String(source.source_profile.research_domain))}</span>`);
+  }
   if (Array.isArray(source.metadata?.tags)) {
     for (const tag of source.metadata.tags) {
       tags.push(`<span class="tag">${escapeHTML(String(tag))}</span>`);

@@ -104,6 +104,56 @@ class ArtifactIngestRunnerTests(unittest.TestCase):
         self.assertEqual(item["published_at"], "2025-02-01T12:00:00Z")
         self.assertGreaterEqual(item["chunk_count"], 1)
         self.assertIn("example.com", item["tags"])
+        self.assertEqual(item["metadata"]["source_profile"]["source_kind"], "official_stats")
+        self.assertEqual(item["metadata"]["source_profile"]["research_domain"], "labor")
+        self.assertIn("official_statistics_source", item["metadata"]["source_profile"]["signal_flags"])
+
+    def test_file_ingest_honors_canonical_uri_override(self) -> None:
+        file_path = self.root / "inputs" / "draft.md"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("# Draft\n\nfile ingest override", encoding="utf-8")
+
+        result = self.runner.run(
+            {
+                "items": [
+                    {
+                        "input_kind": "file",
+                        "file_path": str(file_path),
+                        "canonical_uri": "https://research.example.com/drafts/draft-1",
+                        "title": "Draft note",
+                    }
+                ],
+                "metadata": {},
+            }
+        )
+
+        self.assertEqual(result.status, WorkerStatus.COMPLETED)
+        item = result.structured_outputs["items"][0]
+        self.assertEqual(item["canonical_uri"], "https://research.example.com/drafts/draft-1")
+        self.assertEqual(item["metadata"]["source_profile"]["source_kind"], "general_web")
+        self.assertIn("file_source", item["metadata"]["source_profile"]["signal_flags"])
+
+    def test_inline_ingest_honors_canonical_uri_override(self) -> None:
+        result = self.runner.run(
+            {
+                "items": [
+                    {
+                        "input_kind": "inline",
+                        "content": "# Inline note\n\ninline ingest override",
+                        "content_format": "markdown",
+                        "canonical_uri": "https://research.example.com/notes/inline-note",
+                        "title": "Inline note",
+                    }
+                ],
+                "metadata": {},
+            }
+        )
+
+        self.assertEqual(result.status, WorkerStatus.COMPLETED)
+        item = result.structured_outputs["items"][0]
+        self.assertEqual(item["canonical_uri"], "https://research.example.com/notes/inline-note")
+        self.assertEqual(item["metadata"]["source_profile"]["source_kind"], "general_web")
+        self.assertIn("inline_source", item["metadata"]["source_profile"]["signal_flags"])
 
     def test_pdf_ingest_emits_page_aware_chunks(self) -> None:
         pdf_path = self.root / "inputs" / "report.pdf"

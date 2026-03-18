@@ -102,6 +102,26 @@ class SearchSource(StrEnum):
     BROWSER_WEB = "browser_web"
 
 
+class SourceKind(StrEnum):
+    PAPER = "paper"
+    NEWSLETTER = "newsletter"
+    EXPERT_BLOG = "expert_blog"
+    OFFICIAL_STATS = "official_stats"
+    INSTITUTIONAL_REPORT = "institutional_report"
+    DATASET = "dataset"
+    COMPANY_RESEARCH = "company_research"
+    SOCIAL_POST = "social_post"
+    GENERAL_WEB = "general_web"
+
+
+class SourceFreshnessBucket(StrEnum):
+    CURRENT = "current"
+    RECENT = "recent"
+    EVERGREEN = "evergreen"
+    HISTORICAL = "historical"
+    UNDATED = "undated"
+
+
 class ArtifactInputKind(StrEnum):
     URL = "url"
     FILE = "file"
@@ -164,6 +184,18 @@ class HumanPolicy(StrictModel):
     mode: HumanMode = HumanMode.CHECKPOINTED
     checkpoints: list[str] = Field(default_factory=list)
     timeout_seconds: int | None = None
+
+
+class SourceProfile(StrictModel):
+    source_kind: SourceKind = SourceKind.GENERAL_WEB
+    publisher_type: str = "unknown"
+    document_scope: str = "article"
+    research_domain: str = "general"
+    authority_score: float = 0.0
+    freshness_bucket: SourceFreshnessBucket = SourceFreshnessBucket.UNDATED
+    topics: list[str] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
+    signal_flags: list[str] = Field(default_factory=list)
 
 
 class BrowserCapture(StrictModel):
@@ -395,6 +427,9 @@ class SearchReportCommandRequest(CommandEnvelope):
     prompt: str
     resume_from_run_id: str | None = None
     codex_session_id: str | None = None
+    enabled_sources: list[SearchSource] = Field(default_factory=lambda: [SearchSource.LOCAL_KNOWLEDGE])
+    planner_enabled: bool = True
+    max_results_per_query: int = Field(default=8, ge=1, le=50)
 
     @model_validator(mode="after")
     def validate_prompt(self) -> SearchReportCommandRequest:
@@ -403,6 +438,9 @@ class SearchReportCommandRequest(CommandEnvelope):
             raise ValueError("prompt is required")
         self.resume_from_run_id = str(self.resume_from_run_id or "").strip() or None
         self.codex_session_id = str(self.codex_session_id or "").strip() or None
+        if not self.enabled_sources:
+            self.enabled_sources = [SearchSource.LOCAL_KNOWLEDGE]
+        self.enabled_sources = list(dict.fromkeys(self.enabled_sources))
         return self
 
 
@@ -422,6 +460,7 @@ class ArtifactIngestItem(StrictModel):
     content: str | None = None
     content_format: ArtifactContentFormat | None = None
     declared_media_type: str | None = None
+    canonical_uri: str | None = None
     title: str | None = None
     author: str | None = None
     published_at: datetime | None = None
@@ -434,6 +473,7 @@ class ArtifactIngestItem(StrictModel):
         self.file_path = str(self.file_path or "").strip() or None
         self.content = str(self.content or "").strip() or None
         self.declared_media_type = str(self.declared_media_type or "").strip() or None
+        self.canonical_uri = str(self.canonical_uri or "").strip() or None
         self.title = str(self.title or "").strip() or None
         self.author = str(self.author or "").strip() or None
         self.tags = _normalize_string_list(list(self.tags))
@@ -454,6 +494,7 @@ class ArtifactIngestItem(StrictModel):
 
 class ArtifactIngestRequest(CommandEnvelope):
     items: list[ArtifactIngestItem] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_items(self) -> ArtifactIngestRequest:
@@ -467,6 +508,15 @@ class QueryKnowledgeRequest(CommandEnvelope):
     limit: int = 10
     include_semantic: bool = True
     include_lexical: bool = True
+
+    @model_validator(mode="after")
+    def validate_query(self) -> QueryKnowledgeRequest:
+        self.query = self.query.strip()
+        if not self.query:
+            raise ValueError("query is required")
+        if not self.include_semantic and not self.include_lexical:
+            raise ValueError("at least one retrieval mode must be enabled")
+        return self
 
 
 class DailyBriefAutomationPayload(StrictModel):

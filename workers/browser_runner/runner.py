@@ -97,11 +97,34 @@ class BrowserTaskRunner:
                 page_title = page.title()
                 extracted_data = self._extract(page=page, request=request)
 
+                html_path = run_dir / "page.html"
+                write_text(html_path, page.content())
+                artifacts.append(
+                    build_file_artifact(
+                        kind="browser-page",
+                        path=html_path,
+                        media_type="text/html",
+                        metadata={
+                            "role": "primary_page",
+                            "job_name": request.job_name,
+                            "target_url": request.target_url,
+                            "final_url": final_url,
+                        },
+                    )
+                )
                 if request.capture.html:
-                    html_path = run_dir / "page.html"
-                    write_text(html_path, page.content())
                     artifacts.append(
-                        build_file_artifact(kind="browser-html", path=html_path, media_type="text/html")
+                        build_file_artifact(
+                            kind="browser-html",
+                            path=html_path,
+                            media_type="text/html",
+                            metadata={
+                                "label": "final-page",
+                                "job_name": request.job_name,
+                                "target_url": request.target_url,
+                                "final_url": final_url,
+                            },
+                        )
                     )
 
                 if request.capture.screenshot:
