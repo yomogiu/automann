@@ -9,5 +9,5 @@ class FlowRegistryTests(unittest.TestCase):
         self.assertEqual(FLOW_SPECS["browser_job_flow"].default_work_pool, "browser-process")
         self.assertEqual(FLOW_SPECS["research_report_flow"].deployment_path, "research-report/default")
         self.assertEqual(FLOW_SPECS["paper_batch_flow"].deployment_path, "paper-batch/default")
-        self.assertEqual(FLOW_SPECS["search_report_flow"].deployment_path, "search-report/default")
         self.assertEqual(FLOW_SPECS["codex_search_report_flow"].deployment_path, "search-report-manual/default")
+        self.assertNotIn("search_report_flow", FLOW_SPECS)

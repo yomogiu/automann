@@ -10,6 +10,7 @@ from .models import (
     ReportTaxonomyLink,
     ReportTaxonomyTerm,
     RunRecord,
+    SourceDocument,
     TaskSpec,
 )
 from .repository import LifeRepository
@@ -27,6 +28,7 @@ __all__ = [
     "ReportTaxonomyLink",
     "ReportTaxonomyTerm",
     "RunRecord",
+    "SourceDocument",
     "TaskSpec",
     "bootstrap_databases",
     "bootstrap_life_database",

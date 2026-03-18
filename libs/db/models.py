@@ -93,11 +93,15 @@ class RunRecord(TimestampMixin, Base):
 
 class Artifact(Base):
     __tablename__ = "artifact"
-    __table_args__ = (Index("ix_artifact_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_artifact_created_at", "created_at"),
+        Index("ix_artifact_source_document_id", "source_document_id"),
+    )
 
     id: Mapped[str] = _uuid_pk()
     task_spec_id: Mapped[str | None] = mapped_column(ForeignKey("task_spec.id"))
     run_id: Mapped[str | None] = mapped_column(ForeignKey("run.id"))
+    source_document_id: Mapped[str | None] = mapped_column(ForeignKey("source_document.id"))
     kind: Mapped[str] = mapped_column(String(100), nullable=False)
     path: Mapped[str | None] = mapped_column(String(1024))
     storage_uri: Mapped[str] = mapped_column(String(2048), nullable=False, unique=True)
@@ -110,9 +114,35 @@ class Artifact(Base):
 
     task_spec: Mapped[TaskSpec | None] = relationship(back_populates="artifacts")
     run: Mapped[RunRecord | None] = relationship(back_populates="artifacts")
+    source_document: Mapped["SourceDocument"] = relationship(
+        "SourceDocument",
+        back_populates="artifacts",
+        foreign_keys=[source_document_id],
+    )
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="artifact")
     observations: Mapped[list["Observation"]] = relationship(back_populates="artifact")
     citations: Mapped[list["CitationLink"]] = relationship(back_populates="artifact")
+
+
+class SourceDocument(TimestampMixin, Base):
+    __tablename__ = "source_document"
+    __table_args__ = (Index("ix_source_document_current_text_artifact_id", "current_text_artifact_id"),)
+
+    id: Mapped[str] = _uuid_pk()
+    canonical_uri: Mapped[str] = mapped_column(String(2048), unique=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
+    author: Mapped[str | None] = mapped_column(String(255))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_text_artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifact.id"))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict, nullable=False)
+
+    current_text_artifact: Mapped["Artifact"] = relationship("Artifact", foreign_keys=[current_text_artifact_id])
+    artifacts: Mapped[list["Artifact"]] = relationship(
+        "Artifact",
+        back_populates="source_document",
+        foreign_keys="Artifact.source_document_id",
+    )
 
 
 class Chunk(Base):

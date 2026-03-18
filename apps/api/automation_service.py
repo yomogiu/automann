@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -31,7 +32,7 @@ from .services import OrchestrationService
 _AUTOMATION_FLOW_NAMES = {
     AutomationType.DAILY_BRIEF: "daily_brief_flow",
     AutomationType.PAPER_BATCH: "paper_batch_flow",
-    AutomationType.SEARCH_REPORT: "search_report_flow",
+    AutomationType.SEARCH_REPORT: "codex_search_report_flow",
 }
 
 _AUTOMATION_PAYLOAD_MODELS = {
@@ -51,6 +52,8 @@ Requirements:
 - Preserve useful citations and source links.
 - Call out uncertainty or conflicting signals explicitly.
 """
+
+_SEARCH_REPORT_FLOW_NAME = _AUTOMATION_FLOW_NAMES[AutomationType.SEARCH_REPORT]
 
 
 class AutomationService:
@@ -84,6 +87,8 @@ class AutomationService:
         row = self.repository.get_task_spec(task_spec_id)
         if row is None or not self._is_supported_type(row.task_type):
             raise KeyError(task_spec_id)
+        if AutomationType(row.task_type) == AutomationType.SEARCH_REPORT:
+            row = await self._refresh_search_task_spec_if_needed(row)
         return await self._detail_from_row(row)
 
     async def create_automation(self, request: AutomationCreateRequest) -> AutomationDetail:
@@ -102,6 +107,7 @@ class AutomationService:
             automation_title=request.title,
             payload=payload,
             prompt_path=prompt_path,
+            prompt_body=prompt_body,
         )
         prefect = await self.deployment_client.upsert(
             task_key=task_key,
@@ -143,7 +149,7 @@ class AutomationService:
             raise KeyError(task_spec_id)
 
         automation_type = AutomationType(row.task_type)
-        flow_name = row.flow_name or _AUTOMATION_FLOW_NAMES[automation_type]
+        flow_name = _AUTOMATION_FLOW_NAMES[automation_type]
         work_pool = request.work_pool if "work_pool" in request.model_fields_set else row.work_pool
         work_pool = work_pool or FLOW_SPECS[flow_name].default_work_pool
         schedule_text = request.schedule_text if "schedule_text" in request.model_fields_set else row.schedule_text
@@ -157,12 +163,17 @@ class AutomationService:
         payload_input = request.payload if "payload" in request.model_fields_set and request.payload is not None else dict(row.payload or {})
         payload = self._normalize_payload(automation_type, payload_input)
 
-        prompt_path = Path(row.prompt_path).resolve() if row.prompt_path else None
         if automation_type == AutomationType.SEARCH_REPORT:
-            if "prompt_path" in request.model_fields_set:
-                prompt_path = self._normalize_prompt_path(row.task_key, request.prompt_path)
-            prompt_body = self._normalize_prompt_body(automation_type, request.prompt_body if "prompt_body" in request.model_fields_set else self._read_prompt(prompt_path))
+            prompt_path = self._normalize_prompt_path(
+                row.task_key,
+                request.prompt_path if "prompt_path" in request.model_fields_set else row.prompt_path,
+            )
+            prompt_body = self._normalize_prompt_body(
+                automation_type,
+                request.prompt_body if "prompt_body" in request.model_fields_set else self._read_prompt(prompt_path),
+            )
         else:
+            prompt_path = Path(row.prompt_path).resolve() if row.prompt_path else None
             prompt_body = None
 
         parameters = self._build_flow_parameters(
@@ -170,6 +181,7 @@ class AutomationService:
             automation_title=title,
             payload=payload,
             prompt_path=prompt_path,
+            prompt_body=prompt_body,
         )
         prefect = await self.deployment_client.upsert(
             task_key=row.task_key,
@@ -217,25 +229,43 @@ class AutomationService:
         payload = dict(row.payload or {})
         payload.update(request.payload_overrides)
         payload = self._normalize_payload(automation_type, payload)
+        if automation_type == AutomationType.SEARCH_REPORT:
+            row = await self._refresh_search_task_spec_if_needed(row)
+        flow_name = self._flow_name_for_row(row)
+        prompt_path = Path(row.prompt_path).resolve() if row.prompt_path else None
         parameters = self._build_flow_parameters(
             automation_type=automation_type,
             automation_title=row.title,
             payload=payload,
-            prompt_path=Path(row.prompt_path).resolve() if row.prompt_path else None,
+            prompt_path=prompt_path,
+            prompt_body=self._normalize_prompt_body(
+                automation_type,
+                self._read_prompt(prompt_path) if prompt_path is not None else None,
+            ),
             actor="automation",
         )
         return await self.orchestration.submit_flow(
-            flow_name=row.flow_name or _AUTOMATION_FLOW_NAMES[automation_type],
+            flow_name=flow_name,
             parameters=parameters,
-            work_pool=row.work_pool,
+            work_pool=row.work_pool or FLOW_SPECS[flow_name].default_work_pool,
             task_spec_id=row.id,
-            deployment_path=row.prefect_deployment_path,
+            deployment_path=(
+                row.prefect_deployment_path
+                if row.prefect_deployment_path
+                else (
+                    self._search_deployment_path(row.task_key)
+                    if automation_type == AutomationType.SEARCH_REPORT
+                    else None
+                )
+            ),
         )
 
     async def pause_automation(self, task_spec_id: str) -> AutomationDetail:
         row = self.repository.get_task_spec(task_spec_id)
         if row is None or not self._is_supported_type(row.task_type):
             raise KeyError(task_spec_id)
+        if AutomationType(row.task_type) == AutomationType.SEARCH_REPORT:
+            row = await self._refresh_search_task_spec_if_needed(row)
         if not row.prefect_deployment_id or not row.prefect_deployment_path:
             raise ValueError("automation is missing Prefect deployment metadata")
         prefect = await self.deployment_client.pause(
@@ -255,6 +285,8 @@ class AutomationService:
         row = self.repository.get_task_spec(task_spec_id)
         if row is None or not self._is_supported_type(row.task_type):
             raise KeyError(task_spec_id)
+        if AutomationType(row.task_type) == AutomationType.SEARCH_REPORT:
+            row = await self._refresh_search_task_spec_if_needed(row)
         if not row.prefect_deployment_id or not row.prefect_deployment_path:
             raise ValueError("automation is missing Prefect deployment metadata")
         prefect = await self.deployment_client.resume(
@@ -319,7 +351,7 @@ class AutomationService:
             id=row.id,
             task_key=row.task_key,
             automation_type=AutomationType(row.task_type),
-            flow_name=row.flow_name or _AUTOMATION_FLOW_NAMES[AutomationType(row.task_type)],
+            flow_name=self._flow_name_for_row(row),
             title=row.title,
             description=row.description,
             schedule_text=row.schedule_text,
@@ -376,6 +408,92 @@ class AutomationService:
         return task_type in {item.value for item in AutomationType}
 
     @staticmethod
+    def _flow_name_for_row(row) -> str:  # noqa: ANN001
+        automation_type = AutomationType(row.task_type)
+        if automation_type == AutomationType.SEARCH_REPORT:
+            return _SEARCH_REPORT_FLOW_NAME
+        return row.flow_name or _AUTOMATION_FLOW_NAMES[automation_type]
+
+    @staticmethod
+    def _search_deployment_path(task_key: str) -> str:
+        return f"{FLOW_SPECS[_SEARCH_REPORT_FLOW_NAME].slug}/automation-{task_key}"
+
+    async def _refresh_search_task_spec_if_needed(self, row):  # noqa: ANN001
+        if not self._search_task_spec_needs_refresh(row):
+            return row
+        return await self._refresh_search_task_spec(row)
+
+    def _search_task_spec_needs_refresh(self, row) -> bool:  # noqa: ANN001
+        return (
+            row.flow_name != _SEARCH_REPORT_FLOW_NAME
+            or row.prefect_deployment_name != f"automation-{row.task_key}"
+            or row.prefect_deployment_path != self._search_deployment_path(row.task_key)
+            or not row.prefect_deployment_id
+            or not row.prefect_deployment_path
+        )
+
+    async def _refresh_search_task_spec(self, row):  # noqa: ANN001
+        automation_type = AutomationType.SEARCH_REPORT
+        flow_name = _SEARCH_REPORT_FLOW_NAME
+        spec = FLOW_SPECS[flow_name]
+        payload = self._normalize_payload(automation_type, dict(row.payload or {}))
+        prompt_path = self._normalize_prompt_path(row.task_key, row.prompt_path)
+        prompt_body = self._normalize_prompt_body(automation_type, self._read_prompt(prompt_path))
+        parameters = self._build_flow_parameters(
+            automation_type=automation_type,
+            automation_title=row.title,
+            payload=payload,
+            prompt_path=prompt_path,
+            prompt_body=prompt_body,
+        )
+
+        if prompt_body is not None:
+            self._write_prompt(prompt_path, prompt_body)
+
+        try:
+            prefect = await self.deployment_client.upsert(
+                task_key=row.task_key,
+                task_type=automation_type.value,
+                flow_name=flow_name,
+                schedule_text=row.schedule_text,
+                timezone=row.timezone,
+                work_pool=row.work_pool or spec.default_work_pool,
+                parameters=parameters,
+                paused=row.status == AutomationStatus.PAUSED.value,
+                description=row.description,
+            )
+        except Exception:
+            updated = self.repository.update_task_spec(
+                row.id,
+                flow_name=flow_name,
+                work_pool=row.work_pool or spec.default_work_pool,
+                prompt_path=str(prompt_path),
+                prefect_deployment_id=None,
+                prefect_deployment_name=None,
+                prefect_deployment_path=None,
+                prefect_deployment_url=None,
+                payload=payload,
+            )
+            if updated is None:
+                raise KeyError(row.id)
+            return updated
+
+        updated = self.repository.update_task_spec(
+            row.id,
+            flow_name=flow_name,
+            work_pool=row.work_pool or spec.default_work_pool,
+            prompt_path=str(prompt_path),
+            prefect_deployment_id=prefect.deployment_id,
+            prefect_deployment_name=prefect.deployment_name,
+            prefect_deployment_path=prefect.deployment_path,
+            prefect_deployment_url=prefect.deployment_url,
+            payload=payload,
+        )
+        if updated is None:
+            raise KeyError(row.id)
+        return updated
+
+    @staticmethod
     def _run_summary(run) -> RunSummary:  # noqa: ANN001
         return RunSummary(
             id=run.id,
@@ -424,13 +542,14 @@ class AutomationService:
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(prompt_body, encoding="utf-8")
 
-    @staticmethod
     def _build_flow_parameters(
+        self,
         *,
         automation_type: AutomationType,
         automation_title: str,
         payload: dict[str, Any],
         prompt_path: Path | None,
+        prompt_body: str | None = None,
         actor: str = "user",
     ) -> dict[str, Any]:
         parameters = CommandEnvelope(actor=actor).model_dump(mode="json")
@@ -444,23 +563,52 @@ class AutomationService:
             return parameters
 
         if automation_type == AutomationType.SEARCH_REPORT:
-            max_results = int(payload.get("max_results_per_query") or 8)
-            raw_queries = list(payload.get("queries") or [])
-            parameters.update(
-                {
-                    "title": automation_title,
-                    "theme": payload.get("theme"),
-                    "queries": [
-                        item
-                        if isinstance(item, dict)
-                        else {"label": None, "query": str(item), "limit": max_results}
-                        for item in raw_queries
-                    ],
-                    "enabled_sources": list(payload.get("enabled_sources") or []),
-                    "planner_enabled": bool(payload.get("planner_enabled", True)),
-                    "metadata": dict(payload.get("metadata") or {}),
-                }
+            parameters["prompt"] = self._compose_search_prompt(
+                automation_title=automation_title,
+                payload=payload,
+                prompt_body=prompt_body,
             )
-        if automation_type == AutomationType.SEARCH_REPORT and prompt_path is not None:
-            parameters["prompt_path"] = str(prompt_path)
         return parameters
+
+    @staticmethod
+    def _compose_search_prompt(
+        *,
+        automation_title: str,
+        payload: dict[str, Any],
+        prompt_body: str | None,
+    ) -> str:
+        theme = str(payload.get("theme") or "").strip()
+        queries = [str(item).strip() for item in payload.get("queries") or [] if str(item).strip()]
+        enabled_sources = [str(item).strip() for item in payload.get("enabled_sources") or [] if str(item).strip()]
+        metadata = dict(payload.get("metadata") or {})
+        instructions = (prompt_body or _DEFAULT_SEARCH_PROMPT).strip()
+        lines = [
+            "# Scheduled Search Report",
+            "",
+            f"Title: {automation_title}",
+            f"Theme: {theme or 'None'}",
+            "",
+            "Queries:",
+        ]
+        if queries:
+            lines.extend(f"{index}. {query}" for index, query in enumerate(queries, start=1))
+        else:
+            lines.append("- None")
+        lines.extend(
+            [
+                "",
+                "Enabled sources:",
+                ", ".join(enabled_sources) if enabled_sources else "None",
+                "",
+                "Operator instructions:",
+                instructions,
+                "",
+                "Metadata:",
+                "```json",
+                json.dumps(metadata, indent=2, sort_keys=True),
+                "```",
+                "",
+                "Important: start fresh and do not resume prior sessions.",
+            ]
+        )
+        return "\n".join(lines).strip() + "\n"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -34,6 +34,83 @@ class ArxivFeedIngestOutput(WorkerContract):
     generated_at: datetime
     papers: list[dict[str, Any]] = Field(default_factory=list)
     count: int
+
+
+class ArtifactIngestChunk(WorkerContract):
+    ordinal: int
+    text: str
+    token_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactIngestItemRequest(WorkerContract):
+    input_kind: Literal["url", "file", "inline"]
+    url: str | None = None
+    file_path: str | None = None
+    content: str | None = None
+    content_format: Literal["text", "markdown", "html"] | None = None
+    declared_media_type: str | None = None
+    title: str | None = None
+    author: str | None = None
+    published_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_item(self) -> ArtifactIngestItemRequest:
+        if self.input_kind == "url":
+            if not self.url:
+                raise ValueError("url is required when input_kind=url")
+        elif self.input_kind == "file":
+            if not self.file_path:
+                raise ValueError("file_path is required when input_kind=file")
+        elif self.input_kind == "inline":
+            if self.content is None:
+                raise ValueError("content is required when input_kind=inline")
+            if self.content_format is None:
+                raise ValueError("content_format is required when input_kind=inline")
+        return self
+
+
+class ArtifactIngestRequest(WorkerContract):
+    items: list[ArtifactIngestItemRequest] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_items(self) -> ArtifactIngestRequest:
+        if not self.items:
+            raise ValueError("items is required")
+        return self
+
+
+class ArtifactIngestItemOutput(WorkerContract):
+    input_index: int
+    input_kind: Literal["url", "file", "inline"]
+    status: Literal["completed", "failed", "unsupported"]
+    canonical_uri: str | None = None
+    source_type: str | None = None
+    source_document_id: str | None = None
+    raw_artifact_path: str | None = None
+    normalized_text_artifact_path: str | None = None
+    ingest_manifest_artifact_path: str | None = None
+    chunk_count: int = 0
+    warning_codes: list[str] = Field(default_factory=list)
+    error: str | None = None
+    title: str | None = None
+    author: str | None = None
+    published_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    chunks: list[ArtifactIngestChunk] = Field(default_factory=list)
+
+
+class ArtifactIngestOutput(WorkerContract):
+    generated_at: datetime
+    input_count: int
+    success_count: int
+    failure_count: int
+    warning_count: int
+    items: list[ArtifactIngestItemOutput] = Field(default_factory=list)
 
 
 class BrowserTaskRequest(WorkerContract):

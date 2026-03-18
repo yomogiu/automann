@@ -15,6 +15,7 @@ from .routers.commands import router as commands_router
 from .routers.health import router as health_router
 from .routers.interactions import router as interactions_router
 from .routers.reports import router as reports_router
+from .routers.sources import router as sources_router
 from .routers.runs import router as runs_router
 from apps.web import STATIC_DIR, router as web_router
 
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(automations_router)
     app.include_router(runs_router)
     app.include_router(reports_router)
+    app.include_router(sources_router)
     app.include_router(artifacts_router)
     app.include_router(interactions_router)
     return app

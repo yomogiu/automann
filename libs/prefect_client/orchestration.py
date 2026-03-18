@@ -18,13 +18,13 @@ except Exception:  # pragma: no cover - Prefect may not be installed during stat
     Cron = None
 
 from flows.browser_job import browser_job_flow
+from flows.artifact_ingest import artifact_ingest_flow
 from flows.codex_search_report import codex_search_report_flow
 from flows.daily_brief import daily_brief_flow
 from flows.draft_article import substack_draft_flow
 from flows.paper_batch import paper_batch_flow
 from flows.paper_review import paper_review_flow
 from flows.research_report import research_report_flow
-from flows.search_report import search_report_flow
 from flows.registry import FLOW_SPECS
 
 
@@ -33,10 +33,10 @@ FLOW_CALLABLES = {
     "paper_review_flow": paper_review_flow,
     "paper_batch_flow": paper_batch_flow,
     "browser_job_flow": browser_job_flow,
+    "artifact_ingest_flow": artifact_ingest_flow,
     "codex_search_report_flow": codex_search_report_flow,
     "substack_draft_flow": substack_draft_flow,
     "research_report_flow": research_report_flow,
-    "search_report_flow": search_report_flow,
 }
 
 NON_LOCAL_FLOW_NAMES = frozenset({"browser_job_flow"})
@@ -46,10 +46,10 @@ FLOW_ENTRYPOINTS = {
     "paper_review_flow": "flows/paper_review.py:paper_review_flow",
     "paper_batch_flow": "flows/paper_batch.py:paper_batch_flow",
     "browser_job_flow": "flows/browser_job.py:browser_job_flow",
+    "artifact_ingest_flow": "flows/artifact_ingest.py:artifact_ingest_flow",
     "codex_search_report_flow": "flows/codex_search_report.py:codex_search_report_flow",
     "substack_draft_flow": "flows/draft_article.py:substack_draft_flow",
     "research_report_flow": "flows/research_report.py:research_report_flow",
-    "search_report_flow": "flows/search_report.py:search_report_flow",
 }
 
 
@@ -72,13 +72,6 @@ class PrefectOrchestrationClient:
         return run_deployment is not None
 
     def supports_local_execution(self, flow_name: str, request: dict[str, Any] | None = None) -> bool:
-        if flow_name == "search_report_flow":
-            enabled_sources = {
-                str(item)
-                for item in (request or {}).get("enabled_sources", [])
-                if str(item)
-            }
-            return "browser_web" not in enabled_sources
         return flow_name not in NON_LOCAL_FLOW_NAMES
 
     async def submit(

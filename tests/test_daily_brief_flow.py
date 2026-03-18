@@ -9,7 +9,6 @@ from unittest.mock import patch
 from libs.config import get_settings
 from libs.contracts.models import (
     AdapterResult,
-    BrowserJobRequest,
     EventSuggestion,
     ObservationRecord,
     ReportRecord,
@@ -154,6 +153,7 @@ class DailyBriefFlowTests(unittest.TestCase):
             )
             artifact_path = run_dir / "news_ingest.json"
             write_json(artifact_path, output.model_dump(mode="json"))
+            captured["news_artifact_path"] = str(artifact_path)
             return AdapterResult(
                 status=WorkerStatus.COMPLETED,
                 stdout="news ok",
@@ -177,6 +177,7 @@ class DailyBriefFlowTests(unittest.TestCase):
             )
             artifact_path = run_dir / "arxiv_ingest.json"
             write_json(artifact_path, output.model_dump(mode="json"))
+            captured["arxiv_artifact_path"] = str(artifact_path)
             return AdapterResult(
                 status=WorkerStatus.COMPLETED,
                 stdout="arxiv ok",
@@ -187,19 +188,6 @@ class DailyBriefFlowTests(unittest.TestCase):
                 observations=[
                     ObservationRecord(kind="paper_candidate", summary="paper", payload={"count": output.count}, confidence=0.5)
                 ],
-            )
-
-        def fake_browser_run(_runner_self, request: BrowserJobRequest) -> AdapterResult:
-            captured["browser_request"] = request
-            return AdapterResult(
-                status=WorkerStatus.SKIPPED,
-                stdout="browser deferred",
-                structured_outputs={
-                    "status": "skipped",
-                    "job_name": request.job_name,
-                    "session_mode": "attach",
-                    "extracted_data": {"headline": "Sample"},
-                },
             )
 
         def fake_analysis_run(_runner_self, request: DailyBriefAnalysisRequest) -> AdapterResult:
@@ -263,14 +251,13 @@ class DailyBriefFlowTests(unittest.TestCase):
         with patch("flows.daily_brief.execute_adapter", side_effect=self._execute_adapter_inline):
             with patch("flows.daily_brief.NewsScrapeRunner.run", autospec=True, side_effect=fake_news_run):
                 with patch("flows.daily_brief.ArxivReviewRunner.ingest_feed", autospec=True, side_effect=fake_arxiv_run):
-                    with patch("flows.daily_brief.BrowserTaskRunner.run", autospec=True, side_effect=fake_browser_run):
-                        with patch(
-                            "flows.daily_brief.AnalysisRunner.compile_daily_brief",
-                            autospec=True,
-                            side_effect=fake_analysis_run,
-                        ):
-                            with patch("flows.daily_brief.GitHubPublisher.run", autospec=True, side_effect=fake_publish_run):
-                                result = daily_brief_flow.fn(request=payload, run_id=parent.id)
+                    with patch(
+                        "flows.daily_brief.AnalysisRunner.compile_daily_brief",
+                        autospec=True,
+                        side_effect=fake_analysis_run,
+                    ):
+                        with patch("flows.daily_brief.GitHubPublisher.run", autospec=True, side_effect=fake_publish_run):
+                            result = daily_brief_flow.fn(request=payload, run_id=parent.id)
 
         self.assertEqual(result["date"], "2026-03-15")
         self.assertIsNotNone(result["published"])
@@ -282,17 +269,13 @@ class DailyBriefFlowTests(unittest.TestCase):
         self.assertIsInstance(captured["analysis_request"], DailyBriefAnalysisRequest)
         self.assertEqual(captured["analysis_request"].news_items, payload["metadata"]["seed_news"])
         self.assertEqual(captured["analysis_request"].papers, payload["metadata"]["seed_arxiv"])
-        self.assertEqual(
-            captured["analysis_request"].browser_summary,
-            {
-                "status": "skipped",
-                "job_name": "scheduled-browser-jobs",
-                "session_mode": "attach",
-                "extracted_data": {"headline": "Sample"},
-            },
-        )
+        self.assertEqual(captured["analysis_request"].browser_summary, {"status": "skipped", "reason": "browser_deferred"})
         self.assertIsInstance(captured["publish_request"], PublishRequest)
         self.assertEqual(captured["publish_request"].metadata, {"brief_date": "2026-03-15"})
+        self.assertEqual(
+            [Path(path).resolve() for path in captured["publish_request"].artifact_paths],
+            [Path(captured["news_artifact_path"]).resolve(), Path(captured["arxiv_artifact_path"]).resolve()],
+        )
 
         stored_parent = self.repository.get_run(parent.id)
         assert stored_parent is not None
@@ -309,3 +292,127 @@ class DailyBriefFlowTests(unittest.TestCase):
         self.assertEqual(worker_payloads["arxiv_review_runner"]["seed_arxiv"], payload["metadata"]["seed_arxiv"])
         self.assertEqual(worker_payloads["analysis_runner"]["news_items"], payload["metadata"]["seed_news"])
         self.assertEqual(worker_payloads["github_publisher"]["metadata"], {"brief_date": "2026-03-15"})
+        self.assertNotIn("browser_task_runner", worker_payloads)
+
+    def test_flow_honors_disabled_lane_flags_and_skips_child_runs(self) -> None:
+        payload = {
+            "include_news": False,
+            "include_arxiv": False,
+            "include_browser_jobs": False,
+            "publish": True,
+            "metadata": {
+                "seed_news": [
+                    {
+                        "source": "seed",
+                        "headline": "Ignored news seed",
+                        "url": "https://example.invalid/news/ignored",
+                        "topic": "jobs",
+                    }
+                ],
+                "seed_arxiv": [
+                    {
+                        "paper_id": "2603.00002",
+                        "title": "Ignored paper seed",
+                        "summary": "Ignored summary.",
+                        "authors": ["Ignored Author"],
+                    }
+                ],
+            },
+        }
+        parent = self.repository.start_run(
+            flow_name="daily_brief_flow",
+            worker_key="mini-process",
+            input_payload=payload,
+            status="pending",
+        )
+        captured: dict[str, object] = {}
+
+        def fake_analysis_run(_runner_self, request: DailyBriefAnalysisRequest) -> AdapterResult:
+            captured["analysis_request"] = request
+            run_dir = ensure_worker_dir(get_settings(), "analysis_runner_disabled_test")
+            artifact_path = run_dir / "daily_brief.md"
+            write_text(artifact_path, "# Daily Brief\n")
+            output = DailyBriefAnalysisOutput(
+                brief_date=request.brief_date.isoformat(),
+                news_count=len(request.news_items),
+                paper_count=len(request.papers),
+                browser_status=str((request.browser_summary or {}).get("status")),
+                previous_report_title=(request.previous_report or {}).get("title", "No previous report"),
+            )
+            return AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                stdout="analysis ok",
+                artifact_manifest=[
+                    build_file_artifact(kind="daily-brief", path=artifact_path, media_type="text/markdown")
+                ],
+                structured_outputs=output.model_dump(mode="json"),
+                reports=[
+                    ReportRecord(
+                        report_type="daily_brief",
+                        title="Daily Brief 2026-03-15",
+                        summary="summary",
+                        content_markdown="# Daily Brief\n",
+                        artifact_path=str(artifact_path),
+                        metadata={
+                            **output.model_dump(mode="json"),
+                            "taxonomy": {"filters": ["daily"], "tags": ["synthesis", "scrapes"]},
+                        },
+                    )
+                ],
+            )
+
+        def fake_publish_run(_runner_self, request: PublishRequest) -> AdapterResult:
+            captured["publish_request"] = request
+            run_dir = ensure_worker_dir(get_settings(), "github_publisher_disabled_test")
+            artifact_path = run_dir / "publication-manifest.json"
+            output = PublishOutput(
+                publish_mode="local-bundle",
+                release_tag="life-20260315T120000Z",
+                bundle_dir=str(run_dir),
+                manifest_path=str(artifact_path),
+            )
+            write_json(artifact_path, output.model_dump(mode="json"))
+            return AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                stdout="publish ok",
+                artifact_manifest=[
+                    build_file_artifact(
+                        kind="publication-manifest",
+                        path=artifact_path,
+                        media_type="application/json",
+                    )
+                ],
+                structured_outputs=output.model_dump(mode="json"),
+            )
+
+        with patch("flows.daily_brief.execute_adapter", side_effect=self._execute_adapter_inline):
+            with patch("flows.daily_brief.NewsScrapeRunner.run", autospec=True, side_effect=AssertionError("news should not run")):
+                with patch("flows.daily_brief.ArxivReviewRunner.ingest_feed", autospec=True, side_effect=AssertionError("arxiv should not run")):
+                    with patch(
+                        "flows.daily_brief.AnalysisRunner.compile_daily_brief",
+                        autospec=True,
+                        side_effect=fake_analysis_run,
+                    ):
+                        with patch("flows.daily_brief.GitHubPublisher.run", autospec=True, side_effect=fake_publish_run):
+                            result = daily_brief_flow.fn(request=payload, run_id=parent.id)
+
+        self.assertEqual(result["news"]["status"], "skipped")
+        self.assertEqual(result["news"]["structured_outputs"], {"status": "skipped", "reason": "disabled_by_request", "items": [], "count": 0})
+        self.assertEqual(result["arxiv"]["status"], "skipped")
+        self.assertEqual(result["arxiv"]["structured_outputs"], {"status": "skipped", "reason": "disabled_by_request", "papers": [], "count": 0})
+        self.assertEqual(result["browser"]["status"], "skipped")
+        self.assertEqual(result["browser"]["structured_outputs"], {"status": "skipped", "reason": "disabled_by_request"})
+        self.assertIsInstance(captured["analysis_request"], DailyBriefAnalysisRequest)
+        self.assertEqual(captured["analysis_request"].news_items, [])
+        self.assertEqual(captured["analysis_request"].papers, [])
+        self.assertEqual(captured["analysis_request"].browser_summary, {"status": "skipped", "reason": "disabled_by_request"})
+        self.assertIsInstance(captured["publish_request"], PublishRequest)
+        self.assertEqual(captured["publish_request"].artifact_paths, [])
+
+        child_runs = [
+            row
+            for row in self.repository.list_runs(limit=10, top_level_only=False)
+            if row.parent_run_id == parent.id
+        ]
+        worker_keys = {row.worker_key for row in child_runs}
+        self.assertEqual(worker_keys, {"analysis_runner", "github_publisher"})

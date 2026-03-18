@@ -13,12 +13,14 @@ from apps.api.main import create_app
 from libs.config import get_settings
 from libs.contracts.models import AutomationPrefectStatus
 from libs.db import LifeRepository, bootstrap_life_database, engine_for_url
+from flows.registry import FLOW_SPECS
 
 
 class _FakeDeploymentClient:
     def __init__(self, ui_url: str) -> None:
         self.ui_url = ui_url
         self.deployments: dict[str, dict] = {}
+        self.fail_upsert = False
 
     async def upsert(
         self,
@@ -33,9 +35,11 @@ class _FakeDeploymentClient:
         paused: bool,
         description: str | None = None,
     ) -> AutomationPrefectStatus:
+        if self.fail_upsert:
+            raise RuntimeError("prefect unavailable")
         deployment_id = f"dep-{task_key}"
         deployment_name = f"automation-{task_key}"
-        deployment_path = f"{flow_name.removesuffix('_flow').replace('_', '-')}/{deployment_name}"
+        deployment_path = FLOW_SPECS[flow_name].deployment_path.replace("/default", f"/{deployment_name}")
         self.deployments[deployment_id] = {
             "task_key": task_key,
             "task_type": task_type,
@@ -211,10 +215,18 @@ class AutomationsAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         automation = response.json()["automation"]
         self.assertEqual(automation["automation_type"], "search_report")
+        self.assertEqual(automation["flow_name"], "codex_search_report_flow")
         self.assertEqual(automation["prefect"]["status"], "active")
         prompt_path = Path(automation["prompt_path"])
         self.assertTrue(prompt_path.exists())
         self.assertIn("verify with web search", prompt_path.read_text(encoding="utf-8"))
+        deployment = next(iter(self.fake_deployments.deployments.values()))
+        self.assertEqual(deployment["flow_name"], "codex_search_report_flow")
+        self.assertEqual(automation["prefect"]["deployment_path"], deployment["path"])
+        self.assertIn("Scheduled Search Report", deployment["parameters"]["prompt"])
+        self.assertIn("Title: Chip Search", deployment["parameters"]["prompt"])
+        self.assertIn("1. TSMC capacity 2026", deployment["parameters"]["prompt"])
+        self.assertIn("Important: start fresh and do not resume prior sessions.", deployment["parameters"]["prompt"])
 
         detail = self.client.get(f"/automations/{automation['id']}")
         self.assertEqual(detail.status_code, 200)
@@ -241,6 +253,78 @@ class AutomationsAPITests(unittest.TestCase):
         self.assertEqual(Path(automation["prompt_path"]).resolve(), expected)
         self.assertTrue(expected.exists())
         self.assertIn("highest-signal transmission constraints", expected.read_text(encoding="utf-8"))
+
+    def test_run_search_report_automation_submits_prompt_to_codex_flow(self) -> None:
+        create = self.client.post(
+            "/automations",
+            json={
+                "automation_type": "search_report",
+                "title": "Market Search",
+                "payload": {
+                    "theme": "Semiconductor supply chain",
+                    "queries": ["TSMC capacity 2026"],
+                    "enabled_sources": ["local_knowledge"],
+                },
+                "prompt_body": "Prefer local knowledge before broader synthesis.",
+            },
+        )
+        self.assertEqual(create.status_code, 200)
+        automation = create.json()["automation"]
+
+        run = self.client.post(
+            f"/automations/{automation['id']}/run",
+            json={"payload_overrides": {"queries": ["TSMC capacity 2026", "advanced packaging demand"]}},
+        )
+        self.assertEqual(run.status_code, 200)
+        call = self.fake_orchestration.calls[-1]
+        self.assertEqual(call["flow_name"], "codex_search_report_flow")
+        self.assertEqual(call["deployment_path"], automation["prefect"]["deployment_path"])
+        self.assertIn("Scheduled Search Report", call["parameters"]["prompt"])
+        self.assertIn("Title: Market Search", call["parameters"]["prompt"])
+        self.assertIn("advanced packaging demand", call["parameters"]["prompt"])
+
+    def test_legacy_search_automation_get_migrates_without_prefect_metadata(self) -> None:
+        legacy_prompt_path = self.root / "automation-prompts" / "legacy-search.md"
+        legacy_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_prompt_path.write_text("Legacy instructions remain valid.\n", encoding="utf-8")
+        legacy = self.repository.create_task_spec(
+            task_key="legacy-search",
+            task_type="search_report",
+            flow_name="search_report_flow",
+            title="Legacy Search",
+            description="Old search automation",
+            schedule_text="0 8 * * 1-5",
+            timezone="America/Toronto",
+            work_pool="mini-process",
+            prompt_path=str(legacy_prompt_path),
+            status="active",
+            prefect_deployment_id="legacy-deployment",
+            prefect_deployment_name="automation-legacy-search",
+            prefect_deployment_path="search-report/default",
+            prefect_deployment_url="https://prefect.invalid/deployments/deployment/legacy-deployment",
+            payload={
+                "theme": "Legacy theme",
+                "queries": ["legacy query"],
+                "enabled_sources": ["local_knowledge"],
+                "planner_enabled": True,
+                "max_results_per_query": 8,
+            },
+        )
+        self.fake_deployments.fail_upsert = True
+
+        response = self.client.get(f"/automations/{legacy.id}")
+        self.assertEqual(response.status_code, 200)
+        automation = response.json()["automation"]
+        self.assertEqual(automation["flow_name"], "codex_search_report_flow")
+        self.assertEqual(automation["prefect"]["status"], "missing")
+        self.assertIsNone(automation["prefect"]["deployment_id"])
+        self.assertIsNone(automation["prefect"]["deployment_path"])
+
+        refreshed = self.repository.get_task_spec(legacy.id)
+        assert refreshed is not None
+        self.assertEqual(refreshed.flow_name, "codex_search_report_flow")
+        self.assertIsNone(refreshed.prefect_deployment_id)
+        self.assertIsNone(refreshed.prefect_deployment_path)
 
     def test_prompt_path_outside_configured_prompt_root_is_rejected(self) -> None:
         outside_path = self.root / "outside-prompts" / "bad.md"

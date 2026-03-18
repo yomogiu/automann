@@ -102,6 +102,18 @@ class SearchSource(StrEnum):
     BROWSER_WEB = "browser_web"
 
 
+class ArtifactInputKind(StrEnum):
+    URL = "url"
+    FILE = "file"
+    INLINE = "inline"
+
+
+class ArtifactContentFormat(StrEnum):
+    TEXT = "text"
+    MARKDOWN = "markdown"
+    HTML = "html"
+
+
 class EventSuggestion(StrictModel):
     name: str
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -391,6 +403,62 @@ class SearchReportCommandRequest(CommandEnvelope):
             raise ValueError("prompt is required")
         self.resume_from_run_id = str(self.resume_from_run_id or "").strip() or None
         self.codex_session_id = str(self.codex_session_id or "").strip() or None
+        return self
+
+
+def _normalize_string_list(values: list[Any]) -> list[str]:
+    items: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if text:
+            items.append(text)
+    return list(dict.fromkeys(items))
+
+
+class ArtifactIngestItem(StrictModel):
+    input_kind: ArtifactInputKind
+    url: str | None = None
+    file_path: str | None = None
+    content: str | None = None
+    content_format: ArtifactContentFormat | None = None
+    declared_media_type: str | None = None
+    title: str | None = None
+    author: str | None = None
+    published_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_item(self) -> ArtifactIngestItem:
+        self.url = str(self.url or "").strip() or None
+        self.file_path = str(self.file_path or "").strip() or None
+        self.content = str(self.content or "").strip() or None
+        self.declared_media_type = str(self.declared_media_type or "").strip() or None
+        self.title = str(self.title or "").strip() or None
+        self.author = str(self.author or "").strip() or None
+        self.tags = _normalize_string_list(list(self.tags))
+
+        if self.input_kind == ArtifactInputKind.URL:
+            if not self.url:
+                raise ValueError("url is required when input_kind=url")
+        elif self.input_kind == ArtifactInputKind.FILE:
+            if not self.file_path:
+                raise ValueError("file_path is required when input_kind=file")
+        elif self.input_kind == ArtifactInputKind.INLINE:
+            if not self.content:
+                raise ValueError("content is required when input_kind=inline")
+            if self.content_format is None:
+                raise ValueError("content_format is required when input_kind=inline")
+        return self
+
+
+class ArtifactIngestRequest(CommandEnvelope):
+    items: list[ArtifactIngestItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_items(self) -> ArtifactIngestRequest:
+        if not self.items:
+            raise ValueError("items is required")
         return self
 
 

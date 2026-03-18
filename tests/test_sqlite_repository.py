@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -152,6 +153,221 @@ class SQLiteRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(answered)
         assert answered is not None
         self.assertEqual(answered.status, "answered")
+
+    def test_source_document_upsert_keeps_only_current_text_artifact_visible_in_retrieval(self) -> None:
+        canonical_uri = "file:///knowledge/source-note.md"
+        source_v1_path = self.runtime_root / "source-v1.md"
+        source_v2_path = self.runtime_root / "source-v2.md"
+        source_v1_path.write_text("alpha beta stale version\n", encoding="utf-8")
+        source_v2_path.write_text("alpha beta current version\n", encoding="utf-8")
+
+        first_run = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_v1_path)}]},
+            status="running",
+        )
+        first_persisted = self.repository.persist_adapter_result(
+            first_run.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_v1_path),
+                        storage_uri=source_v1_path.as_uri(),
+                        size_bytes=source_v1_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+                structured_outputs={
+                    "items": [
+                        {
+                            "input_index": 0,
+                            "input_kind": "file",
+                            "status": "completed",
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                            "normalized_text_artifact_path": str(source_v1_path),
+                            "chunk_count": 1,
+                            "warning_codes": [],
+                            "title": "Source note",
+                            "tags": ["markdown"],
+                            "metadata": {"source_type": "markdown", "tags": ["markdown"]},
+                            "chunks": [
+                                {
+                                    "ordinal": 0,
+                                    "text": "alpha beta stale version",
+                                    "token_count": 4,
+                                    "metadata": {"canonical_uri": canonical_uri, "source_type": "markdown"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+        )
+        self.assertIsNotNone(first_persisted)
+        assert first_persisted is not None
+        first_artifact = first_persisted.artifacts[0]
+
+        source = self.repository.upsert_source_document(
+            canonical_uri=canonical_uri,
+            source_type="markdown",
+            title="Source note v1",
+            author="Analyst",
+            current_text_artifact_id=first_artifact.id,
+            metadata_json={"tags": ["markdown"]},
+        )
+        self.assertEqual(source.current_text_artifact_id, first_artifact.id)
+        self.assertEqual(self.repository.assign_artifact_to_source(first_artifact.id, source.id).id, first_artifact.id)
+        self.assertEqual(
+            self.repository.upsert_chunks(
+                artifact_id=first_artifact.id,
+                chunks=[
+                    {
+                        "ordinal": 0,
+                        "text": "alpha beta stale version",
+                        "token_count": 4,
+                        "metadata": {"canonical_uri": canonical_uri, "source_type": "markdown"},
+                    }
+                ],
+            ),
+            1,
+        )
+
+        time.sleep(1.1)
+        second_run = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_v2_path)}]},
+            status="running",
+        )
+        second_persisted = self.repository.persist_adapter_result(
+            second_run.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_v2_path),
+                        storage_uri=source_v2_path.as_uri(),
+                        size_bytes=source_v2_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+                structured_outputs={
+                    "items": [
+                        {
+                            "input_index": 0,
+                            "input_kind": "file",
+                            "status": "completed",
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                            "normalized_text_artifact_path": str(source_v2_path),
+                            "chunk_count": 1,
+                            "warning_codes": [],
+                            "title": "Source note",
+                            "tags": ["markdown"],
+                            "metadata": {"source_type": "markdown", "tags": ["markdown"]},
+                            "chunks": [
+                                {
+                                    "ordinal": 0,
+                                    "text": "alpha beta current version",
+                                    "token_count": 4,
+                                    "metadata": {"canonical_uri": canonical_uri, "source_type": "markdown"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+        )
+        self.assertIsNotNone(second_persisted)
+        assert second_persisted is not None
+        second_artifact = second_persisted.artifacts[0]
+
+        updated = self.repository.upsert_source_document(
+            canonical_uri=canonical_uri,
+            source_type="markdown",
+            title="Source note v2",
+            author="Analyst",
+            current_text_artifact_id=second_artifact.id,
+            metadata_json={"tags": ["markdown", "current"]},
+        )
+        self.assertEqual(updated.id, source.id)
+        self.assertEqual(updated.current_text_artifact_id, second_artifact.id)
+        self.assertEqual(self.repository.assign_artifact_to_source(second_artifact.id, source.id).id, second_artifact.id)
+        self.assertEqual(
+            self.repository.upsert_chunks(
+                artifact_id=second_artifact.id,
+                chunks=[
+                    {
+                        "ordinal": 0,
+                        "text": "alpha beta current version",
+                        "token_count": 4,
+                        "metadata": {"canonical_uri": canonical_uri, "source_type": "markdown"},
+                    }
+                ],
+            ),
+            1,
+        )
+
+        source_document = self.repository.get_source_document_by_canonical_uri(canonical_uri)
+        self.assertIsNotNone(source_document)
+        assert source_document is not None
+        self.assertEqual(source_document.current_text_artifact_id, second_artifact.id)
+
+        hits = self.repository.query_chunks(query="alpha beta", limit=10)
+        self.assertEqual([item.artifact_id for item in hits], [second_artifact.id])
+        self.assertEqual([item.text for item in hits], ["alpha beta current version"])
+
+        fetched = self.repository.get_source_document(source.id)
+        self.assertIsNotNone(fetched)
+        assert fetched is not None
+        self.assertEqual(fetched.current_text_artifact_id, second_artifact.id)
+
+        by_id = self.repository.get_source_document(source.id)
+        self.assertIsNotNone(by_id)
+        assert by_id is not None
+        self.assertEqual(by_id.canonical_uri, canonical_uri)
+
+        artifacts = self.repository.list_artifacts_for_source_document(source.id)
+        self.assertEqual([item.id for item in artifacts], [second_artifact.id, first_artifact.id])
+        self.assertEqual(artifacts[0].source_document_id, source.id)
+
+        chunks = self.repository.list_chunks_for_artifact(second_artifact.id)
+        self.assertEqual([item.text for item in chunks], ["alpha beta current version"])
+
+    def test_source_document_listing_orders_by_update_and_created_at(self) -> None:
+        source_a = self.repository.upsert_source_document(
+            canonical_uri="file:///knowledge/a.md",
+            source_type="markdown",
+            title="A",
+            metadata_json={"tags": ["a"]},
+        )
+        time.sleep(1.1)
+        source_b = self.repository.upsert_source_document(
+            canonical_uri="file:///knowledge/b.md",
+            source_type="markdown",
+            title="B",
+            metadata_json={"tags": ["b"]},
+        )
+
+        listed = self.repository.list_source_documents(limit=10)
+        self.assertEqual([item.id for item in listed[:2]], [source_b.id, source_a.id])
 
     def test_report_revision_helpers_promote_and_list_current_series(self) -> None:
         first_run = self.repository.start_run(

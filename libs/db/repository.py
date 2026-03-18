@@ -21,6 +21,7 @@ from .models import (
     Report,
     ReportTaxonomyLink,
     ReportTaxonomyTerm,
+    SourceDocument,
     RunRecord,
     TaskSpec,
 )
@@ -212,6 +213,15 @@ class LifeRepository:
         with session_scope(self.engine) as session:
             return session.get(Artifact, artifact_id)
 
+    def get_source_document(self, source_id: str) -> SourceDocument | None:
+        with session_scope(self.engine) as session:
+            return session.get(SourceDocument, source_id)
+
+    def get_source_document_by_canonical_uri(self, canonical_uri: str) -> SourceDocument | None:
+        with session_scope(self.engine) as session:
+            stmt = select(SourceDocument).where(SourceDocument.canonical_uri == canonical_uri.strip()).limit(1)
+            return session.scalars(stmt).first()
+
     def get_interaction(self, interaction_id: str) -> Interaction | None:
         with session_scope(self.engine) as session:
             return session.get(Interaction, interaction_id)
@@ -262,6 +272,15 @@ class LifeRepository:
             if current_only:
                 stmt = stmt.where(or_(Report.is_current.is_(True), Report.is_current.is_(None)))
             stmt = stmt.order_by(desc(Report.created_at)).limit(limit)
+            return list(session.scalars(stmt))
+
+    def list_source_documents(self, *, limit: int = 100) -> list[SourceDocument]:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[SourceDocument]] = (
+                select(SourceDocument)
+                .order_by(desc(SourceDocument.updated_at), desc(SourceDocument.created_at))
+                .limit(limit)
+            )
             return list(session.scalars(stmt))
 
     def list_report_revisions(self, report_id: str) -> list[Report]:
@@ -417,6 +436,25 @@ class LifeRepository:
     def list_artifacts(self, *, limit: int = 50) -> list[Artifact]:
         with session_scope(self.engine) as session:
             stmt: Select[tuple[Artifact]] = select(Artifact).order_by(desc(Artifact.created_at)).limit(limit)
+            return list(session.scalars(stmt))
+
+    def list_artifacts_for_source_document(self, source_document_id: str) -> list[Artifact]:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[Artifact]] = (
+                select(Artifact)
+                .where(Artifact.source_document_id == source_document_id)
+                .order_by(desc(Artifact.created_at))
+            )
+            return list(session.scalars(stmt))
+
+    def list_chunks_for_artifact(self, artifact_id: str, *, limit: int = 50) -> list[Chunk]:
+        with session_scope(self.engine) as session:
+            stmt: Select[tuple[Chunk]] = (
+                select(Chunk)
+                .where(Chunk.artifact_id == artifact_id)
+                .order_by(Chunk.ordinal)
+                .limit(limit)
+            )
             return list(session.scalars(stmt))
 
     def list_interactions(self, *, limit: int = 25, status: str | None = None) -> list[Interaction]:
@@ -596,6 +634,79 @@ class LifeRepository:
             session.refresh(record)
             return record
 
+    def upsert_source_document(
+        self,
+        *,
+        canonical_uri: str,
+        source_type: str,
+        title: str | None | object = _MISSING,
+        author: str | None | object = _MISSING,
+        published_at: datetime | None | object = _MISSING,
+        current_text_artifact_id: str | None | object = _MISSING,
+        metadata_json: dict[str, Any] | object = _MISSING,
+    ) -> SourceDocument:
+        canonical_uri = canonical_uri.strip()
+        with session_scope(self.engine) as session:
+            record = session.scalars(
+                select(SourceDocument).where(SourceDocument.canonical_uri == canonical_uri).limit(1)
+            ).first()
+            if record is None:
+                record = SourceDocument(
+                    canonical_uri=canonical_uri,
+                    source_type=source_type,
+                    title=None if title is _MISSING else title,
+                    author=None if author is _MISSING else author,
+                    published_at=None if published_at is _MISSING else published_at,
+                    current_text_artifact_id=(
+                        None if current_text_artifact_id is _MISSING else current_text_artifact_id
+                    ),
+                    metadata_json={} if metadata_json is _MISSING else dict(metadata_json),
+                )
+                session.add(record)
+            else:
+                record.source_type = source_type
+                if title is not _MISSING:
+                    record.title = title
+                if author is not _MISSING:
+                    record.author = author
+                if published_at is not _MISSING:
+                    record.published_at = published_at
+                if current_text_artifact_id is not _MISSING:
+                    record.current_text_artifact_id = current_text_artifact_id
+                if metadata_json is not _MISSING:
+                    record.metadata_json = dict(metadata_json)
+            session.flush()
+            session.refresh(record)
+            return record
+
+    def assign_artifact_to_source(self, artifact_id: str, source_document_id: str) -> Artifact | None:
+        with session_scope(self.engine) as session:
+            artifact = session.get(Artifact, artifact_id)
+            if artifact is None:
+                return None
+            source_document = session.get(SourceDocument, source_document_id)
+            if source_document is None:
+                return None
+            artifact.source_document_id = source_document.id
+            session.flush()
+            session.refresh(artifact)
+            return artifact
+
+    def update_source_document_current_text_artifact(
+        self,
+        source_document_id: str,
+        *,
+        current_text_artifact_id: str | None,
+    ) -> SourceDocument | None:
+        with session_scope(self.engine) as session:
+            record = session.get(SourceDocument, source_document_id)
+            if record is None:
+                return None
+            record.current_text_artifact_id = current_text_artifact_id
+            session.flush()
+            session.refresh(record)
+            return record
+
     def upsert_chunks(
         self,
         *,
@@ -636,7 +747,13 @@ class LifeRepository:
                         SELECT chunk.id
                         FROM chunk_fts
                         JOIN chunk ON chunk.rowid = chunk_fts.rowid
+                        JOIN artifact ON artifact.id = chunk.artifact_id
+                        LEFT JOIN source_document ON source_document.id = artifact.source_document_id
                         WHERE chunk_fts MATCH :match_query
+                          AND (
+                            artifact.source_document_id IS NULL
+                            OR artifact.id = source_document.current_text_artifact_id
+                          )
                         ORDER BY bm25(chunk_fts), chunk.created_at DESC
                         LIMIT :limit
                         """

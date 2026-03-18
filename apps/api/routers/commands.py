@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from apps.api.dependencies import orchestration_dep
 from apps.api.services import OrchestrationService
 from libs.contracts.models import (
+    ArtifactIngestRequest,
     BrowserJobRequest,
     DailyBriefRequest,
     DraftArticleRequest,
@@ -47,6 +48,17 @@ async def run_browser_job(
 ) -> dict:
     return await orchestration.submit_flow(
         flow_name="browser_job_flow",
+        parameters=request.model_dump(mode="json"),
+    )
+
+
+@router.post("/artifact-ingest")
+async def ingest_artifacts(
+    request: ArtifactIngestRequest,
+    orchestration: OrchestrationService = Depends(orchestration_dep),
+) -> dict:
+    return await orchestration.submit_flow(
+        flow_name="artifact_ingest_flow",
         parameters=request.model_dump(mode="json"),
     )
 

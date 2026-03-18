@@ -4,6 +4,7 @@ Auto Mann is a local Prefect-first automation stack for:
 
 - daily brief generation
 - paper review ingestion and summarization
+- generic artifact ingestion into shared retrieval
 - browser-assisted jobs
 - revisioned research reports and publication artifacts
 
@@ -153,6 +154,10 @@ curl -X POST http://127.0.0.1:8000/commands/browser-job \
   -H "Content-Type: application/json" \
   -d '{"job_name":"x-capture","target_url":"https://x.com/home","session":{"mode":"attach","cdp_url":"http://127.0.0.1:9222","profile_name":"main"},"steps":[{"op":"wait_for","selector":"main"},{"op":"screenshot","name":"timeline"}],"extract":[{"name":"first_post","selector":"article","kind":"text"}]}'
 
+curl -X POST http://127.0.0.1:8000/commands/artifact-ingest \
+  -H "Content-Type: application/json" \
+  -d '{"items":[{"input_kind":"inline","content":"# Note\n\nReusable markdown content.","content_format":"markdown","title":"Note","tags":["kb"]}]}'
+
 curl -X POST http://127.0.0.1:8000/commands/research-report \
   -H "Content-Type: application/json" \
   -d '{"theme":"Edge AI infrastructure","boundaries":["North America"],"areas_of_interest":["power supply","GPU lead times"],"report_key":"edge-ai","edit_mode":"merge","human_policy":{"mode":"auto"}}'
@@ -192,6 +197,7 @@ Request schemas and richer docs are available in the interactive FastAPI docs at
 - Fresh runs create a new lineage key of the form `search-report:<run-id>`; resumes reuse the earlier lineage when `resume_from_run_id` points at a prior manual search-report run.
 - Resume precedence is: prior run's saved Codex session from `resume_from_run_id`, then explicit `codex_session_id`; if the saved session is missing or resume fails, the flow falls back to a fresh Codex run seeded from the saved memo.
 - Manual `search-report` revisions auto-promote immediately in v1; there is no checkpoint gate on this lane yet.
+- `search-report` automations are codex-backed as well: saved automation payloads and prompt files are composed into a fresh `SearchReportCommandRequest.prompt` before execution, and the legacy planner-driven search flow has been retired.
 
 ## Browser job model
 
@@ -209,10 +215,11 @@ The codebase now has several real end-to-end report paths, but not every activit
 - `paper-review` is working end to end from `POST /commands/paper-review` to a persisted tagged report in the frontend library.
 - `research-report` is working end to end as a revisioned analysis flow; checkpointed runs pause for promotion before the new revision becomes current.
 - `search-report` is working end to end as a manual command from `POST /commands/search-report` to a persisted tagged revisioned report; it resumes from saved Codex session state when available and falls back to memo-seeded continuation when it is not.
-- `search-report` automation still exists as a degraded digest lane; it plans queries, recalls local knowledge, and can touch the browser branch, but it is not yet a dedicated shared-ingestion/retrieval pipeline and its browser branch still runs inline.
+- `artifact-ingest` is now wired as a retrieval-first lane for files, inline text, and public URLs; it stores source metadata plus reusable chunks and does not create `/reports` cards.
+- `search-report` automation now standardizes on `codex_search_report_flow`; the saved structured payload is converted into a Codex prompt and executed through the same search-report deployment family used by the manual lane.
 - `paper-batch` works as an automation for an explicit `papers[]` list; it is not an arXiv topic-discovery pipeline.
 - `browser-job` works as an explicit command and requires the browser worker, but it produces run artifacts rather than a library report.
-- `daily-brief` still has known degraded behavior called out below.
+- `daily-brief` still has known degraded behavior called out below, and browser-backed work remains deferred for now.
 
 ```mermaid
 flowchart TD
@@ -232,31 +239,28 @@ flowchart TD
     G1 -->|checkpointed| O3["Pending revision + interaction"]:::degraded --> ReviewGate
     C3["/commands/draft-article"]:::working --> F3["substack_draft_flow"]:::working --> W3["DraftWriter"]:::working --> O4["Tagged substack_draft report"]:::working --> Library
     C4["/commands/browser-job"]:::working --> F4["browser_job_flow"]:::working --> W4["BrowserTaskRunner on browser worker"]:::working --> O5["Artifacts only<br/>no library report"]:::neutral --> Artifacts
-    C5["/commands/daily-brief"]:::degraded --> F5["daily_brief_flow"]:::degraded --> O6["news + arxiv ingest + browser + analysis + publish"]:::degraded --> Library
+    C5["/commands/daily-brief"]:::degraded --> F5["daily_brief_flow"]:::degraded --> O6["news + arxiv ingest + deferred browser + analysis + publish"]:::degraded --> Library
     C6["/commands/search-report"]:::working --> F6["codex_search_report_flow"]:::working --> W6["CodexSearchSessionRunner"]:::working --> O7["Revisioned search_report + Codex artifacts"]:::working --> Library
+    C7["/commands/artifact-ingest"]:::working --> F7["artifact_ingest_flow"]:::working --> W7["ArtifactIngestRunner"]:::working --> O8["SourceDocument + reusable chunks<br/>artifacts only"]:::working --> Artifacts
   end
 
   subgraph Automations["Automation-only entrypoints"]
-    A1["Search Report automation"]:::degraded --> S1["search_report_flow"]:::degraded --> S2["Codex planner creates query plan"]:::degraded
-    S2 --> S3["local_knowledge retrieval"]:::working --> S4["Tagged search_report digest"]:::degraded --> Library
-    S2 --> S5["browser_web branch"]:::degraded --> S6["calls browser_job_flow.fn inline"]:::degraded --> S4
+    A1["Search Report automation"]:::working --> S1["codex_search_report_flow"]:::working --> S2["SearchReportCommandRequest.prompt composer"]:::working --> S3["CodexSearchSessionRunner"]:::working --> S4["Tagged search_report digest"]:::working --> Library
     A2["Paper Batch automation"]:::working --> P1["paper_batch_flow"]:::working --> P2["explicit papers[] list"]:::working --> P3["child paper_review_flow runs"]:::working --> P4["batch report"]:::working --> Library
   end
 
   Missing2["No arXiv topic-search or discovery flow"]:::broken
-  Missing3["No shared ingestion/retrieval pipeline for cross-run search memory"]:::broken
+  Missing3["Search-discovered/browser-captured sources are not auto-ingested into shared retrieval yet"]:::broken
 ```
 
 ## Open Items
 
 These review findings are still open and should be treated as current known gaps:
 
-- `daily-brief` currently ignores `include_news`, `include_arxiv`, and `include_browser_jobs`; all three lanes still run.
-- The `daily-brief` browser lane currently runs inline with a placeholder target instead of going through the dedicated `browser-process` fail-closed path used by explicit `browser-job` commands.
+- `daily-brief` now honors `include_news` and `include_arxiv`, but browser-backed work is explicitly deferred even when `include_browser_jobs=true`.
 - A `daily-brief` parent run can still be marked `completed` even if a child lane fails, so top-level status may under-report degraded runs.
 - `browser-job` accepts `session.profile_name`, but attach mode still reuses the first exposed browser context and does not yet use the profile label to select a context.
-- Manual `search-report` is intentionally a thin Codex session wrapper in v1; it does not yet ingest discovered sources into shared chunk retrieval or a reusable knowledge base.
-- Automation `search_report_flow` still uses the older planner-plus-digest shape and its browser lane still calls `browser_job_flow.fn(...)` inline instead of crossing the dedicated browser-worker boundary.
+- Manual `search-report` now recalls shared local knowledge before each Codex run, but it still does not auto-ingest newly discovered web sources back into the shared corpus.
 - `research-report` callers should avoid whitespace-only `report_key` values until server-side normalization is tightened to reject or derive a non-empty lineage key.
 
 ## Repository pointers

@@ -16,6 +16,7 @@ from libs.contracts.models import (
     WorkerStatus,
 )
 from libs.db import LifeRepository, engine_for_url
+from libs.retrieval import RetrievalService
 from workers.common import build_file_artifact, ensure_worker_dir, write_json, write_text
 
 from .common import execute_adapter
@@ -171,14 +172,36 @@ def _resume_context(
     }
 
 
+def _local_retrieval_context(
+    repository: LifeRepository,
+    *,
+    prompt: str,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    retrieval = RetrievalService(repository)
+    hits = retrieval.query(query=prompt, limit=limit)
+    return [
+        {
+            "chunk_id": str(item.get("id") or ""),
+            "artifact_id": str(item.get("artifact_id") or ""),
+            "text": str(item.get("text") or "")[:800],
+            "metadata": dict(item.get("metadata") or {}),
+        }
+        for item in hits
+        if str(item.get("text") or "").strip()
+    ]
+
+
 def _render_prompt(
     *,
     prompt: str,
     resume_context: dict[str, Any] | None,
+    local_retrieval_context: list[dict[str, Any]] | None,
 ) -> str:
     payload = {
         "user_prompt": prompt,
         "resume_context": resume_context or {},
+        "local_retrieval_context": local_retrieval_context or [],
     }
     return "\n\n".join(
         [
@@ -245,6 +268,7 @@ def _run_codex_search_report(
         prior_outputs=state["prior_outputs"],
         prior_report_markdown=state["prior_report_markdown"],
     )
+    local_retrieval_context = _local_retrieval_context(repository, prompt=request.prompt)
 
     try:
         session_runner, session_request_model = _load_session_runner(settings)
@@ -302,7 +326,11 @@ def _run_codex_search_report(
         resume_source = "session_resume"
         session_result = session_runner.run(
             make_session_request(
-                _render_prompt(prompt=request.prompt, resume_context=resume_context),
+                _render_prompt(
+                    prompt=request.prompt,
+                    resume_context=resume_context,
+                    local_retrieval_context=local_retrieval_context,
+                ),
                 resume_session_id=state["resume_session_id"],
             )
         )
@@ -311,7 +339,11 @@ def _run_codex_search_report(
             resume_source = "memo_fallback"
             session_result = session_runner.run(
                 make_session_request(
-                    _render_prompt(prompt=request.prompt, resume_context=resume_context),
+                    _render_prompt(
+                        prompt=request.prompt,
+                        resume_context=resume_context,
+                        local_retrieval_context=local_retrieval_context,
+                    ),
                     resume_session_id=None,
                 )
             )
@@ -319,7 +351,11 @@ def _run_codex_search_report(
         resume_source = "memo_fallback"
         session_result = session_runner.run(
             make_session_request(
-                _render_prompt(prompt=request.prompt, resume_context=resume_context),
+                _render_prompt(
+                    prompt=request.prompt,
+                    resume_context=resume_context,
+                    local_retrieval_context=local_retrieval_context,
+                ),
                 resume_session_id=None,
             )
         )
@@ -327,14 +363,22 @@ def _run_codex_search_report(
         resume_source = "session_resume"
         session_result = session_runner.run(
             make_session_request(
-                _render_prompt(prompt=request.prompt, resume_context=resume_context),
+                _render_prompt(
+                    prompt=request.prompt,
+                    resume_context=resume_context,
+                    local_retrieval_context=local_retrieval_context,
+                ),
                 resume_session_id=request.codex_session_id,
             )
         )
     else:
         session_result = session_runner.run(
             make_session_request(
-                _render_prompt(prompt=request.prompt, resume_context=resume_context),
+                _render_prompt(
+                    prompt=request.prompt,
+                    resume_context=resume_context,
+                    local_retrieval_context=local_retrieval_context,
+                ),
                 resume_session_id=None,
             )
         )

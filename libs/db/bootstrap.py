@@ -50,6 +50,11 @@ SQLITE_REPORT_REVISION_DDL = (
     "CREATE INDEX IF NOT EXISTS ix_report_series_current ON report (report_series_id, is_current)",
 )
 
+SQLITE_ARTIFACT_SOURCE_DOCUMENT_DDL = (
+    "ALTER TABLE artifact ADD COLUMN source_document_id VARCHAR(36)",
+    "CREATE INDEX IF NOT EXISTS ix_artifact_source_document_id ON artifact (source_document_id)",
+)
+
 SQLITE_TASK_SPEC_AUTOMATION_DDL = (
     "ALTER TABLE task_spec ADD COLUMN flow_name VARCHAR(255)",
     "ALTER TABLE task_spec ADD COLUMN timezone VARCHAR(100)",
@@ -114,6 +119,21 @@ def _bootstrap_report_revisions(engine: Engine) -> None:
     LifeRepository(engine).backfill_report_revisions()
 
 
+def _bootstrap_artifact_source_documents(engine: Engine) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+
+    with engine.begin() as connection:
+        existing_columns = {
+            row["name"]
+            for row in connection.exec_driver_sql("PRAGMA table_info('artifact')").mappings()
+        }
+        for statement in SQLITE_ARTIFACT_SOURCE_DOCUMENT_DDL:
+            if statement.startswith("ALTER TABLE artifact ADD COLUMN source_document_id") and "source_document_id" in existing_columns:
+                continue
+            connection.exec_driver_sql(statement)
+
+
 def _bootstrap_task_spec_automation_fields(engine: Engine) -> None:
     if engine.dialect.name != "sqlite":
         return
@@ -161,6 +181,7 @@ def bootstrap_life_database(settings: Settings) -> None:
     Base.metadata.create_all(engine)
     _bootstrap_sqlite_support(engine)
     _bootstrap_task_spec_automation_fields(engine)
+    _bootstrap_artifact_source_documents(engine)
     _bootstrap_report_revisions(engine)
     bootstrap_report_taxonomy(engine)
 

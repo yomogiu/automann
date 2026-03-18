@@ -225,6 +225,48 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         self.assertEqual(stored_parent.status, "completed")
         self.assertEqual(stored_parent.structured_outputs["report"]["current_report_id"], current.id)
 
+    def test_fresh_flow_includes_local_retrieval_context_in_prompt(self) -> None:
+        parent = self.repository.start_run(
+            flow_name="codex_search_report_flow",
+            worker_key="mini-process",
+            input_payload={"prompt": "ai jobs"},
+            status="pending",
+        )
+        fake_runner = _FakeSessionRunner(
+            lambda request, run_number: self._session_result(
+                run_number=run_number,
+                title="AI Jobs",
+                session_id="11111111-1111-1111-1111-111111111111",
+            )
+        )
+        retrieval_hits = [
+            {
+                "id": "chunk-1",
+                "artifact_id": "artifact-1",
+                "text": "Jobs involving repetitive reporting are most exposed to automation.",
+                "metadata": {"source_type": "html"},
+            }
+        ]
+
+        with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
+            with patch(
+                "flows.codex_search_report._load_session_runner",
+                return_value=(fake_runner, CodexSearchSessionRequest),
+            ):
+                with patch(
+                    "flows.codex_search_report.RetrievalService.query",
+                    autospec=True,
+                    return_value=retrieval_hits,
+                ):
+                    result = codex_search_report_flow.fn(
+                        request={"prompt": "Identify jobs at risk from AI."},
+                        run_id=parent.id,
+                    )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertIn('"local_retrieval_context": [', fake_runner.requests[0].prompt)
+        self.assertIn("Jobs involving repetitive reporting", fake_runner.requests[0].prompt)
+
     def test_resume_prefers_prior_run_session_id_and_creates_new_revision(self) -> None:
         fake_runner = _FakeSessionRunner(
             lambda request, run_number: self._session_result(

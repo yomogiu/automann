@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from libs.config import get_settings
-from libs.contracts.models import AdapterResult, ObservationRecord, ReportRecord, WorkerStatus
+from libs.contracts.models import AdapterResult, ArtifactRecord, ObservationRecord, ReportRecord, WorkerStatus
 from libs.contracts.workers import ResearchReportWorkerRequest
 from libs.db import LifeRepository, bootstrap_life_database, engine_for_url
 from flows.research_report import PROMOTE_REVISION_CHECKPOINT, research_report_flow
@@ -212,6 +212,90 @@ class ResearchReportFlowTests(unittest.TestCase):
         self.assertTrue(revisions[0].is_current)
         self.assertFalse(revisions[1].is_current)
         self.assertEqual(captured[1].supersedes_report_id, revisions[1].id)
+
+    def test_flow_retrieves_content_from_ingested_sources(self) -> None:
+        source_path = self.root / "artifacts" / "ai-risk-note.md"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text("clerical employment risk rises when task automation accelerates", encoding="utf-8")
+        canonical_uri = "file:///knowledge/ai-risk-note.md"
+
+        ingest_run = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_path)}]},
+            status="running",
+        )
+        ingest_persisted = self.repository.persist_adapter_result(
+            ingest_run.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_path),
+                        storage_uri=source_path.as_uri(),
+                        size_bytes=source_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+            ),
+        )
+        assert ingest_persisted is not None
+        artifact = ingest_persisted.artifacts[0]
+        source = self.repository.upsert_source_document(
+            canonical_uri=canonical_uri,
+            source_type="markdown",
+            title="AI risk note",
+            current_text_artifact_id=artifact.id,
+            metadata_json={"tags": ["employment", "ai"]},
+        )
+        self.repository.assign_artifact_to_source(artifact.id, source.id)
+        self.repository.upsert_chunks(
+            artifact_id=artifact.id,
+            chunks=[
+                {
+                    "ordinal": 0,
+                    "text": "clerical employment risk rises when task automation accelerates",
+                    "token_count": 8,
+                    "metadata": {"canonical_uri": canonical_uri, "source_type": "markdown"},
+                }
+            ],
+        )
+
+        parent = self.repository.start_run(
+            flow_name="research_report_flow",
+            worker_key="mini-process",
+            input_payload={"theme": "clerical employment automation risk"},
+            status="pending",
+        )
+        captured: dict[str, ResearchReportWorkerRequest] = {}
+
+        def fake_run(_runner_self, request: ResearchReportWorkerRequest) -> AdapterResult:
+            captured["request"] = request
+            return self._worker_result(request)
+
+        with patch("flows.research_report.execute_adapter", side_effect=self._execute_adapter_inline):
+            with patch("flows.research_report.ResearchReportRunner.run", autospec=True, side_effect=fake_run):
+                result = research_report_flow.fn(
+                    request={
+                        "theme": "clerical employment automation risk",
+                        "report_key": "ai-labour-risk",
+                        "areas_of_interest": ["task automation"],
+                        "boundaries": [],
+                        "edit_mode": "merge",
+                        "human_policy": {"mode": "auto"},
+                    },
+                    run_id=parent.id,
+                )
+
+        self.assertIsNotNone(result["current_report_id"])
+        self.assertIn("clerical employment risk rises", captured["request"].retrieval_context[0]["text"])
 
     def test_flow_creates_checkpoint_and_leaves_revision_pending(self) -> None:
         parent = self.repository.start_run(

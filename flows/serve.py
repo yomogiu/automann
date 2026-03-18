@@ -3,13 +3,13 @@ from __future__ import annotations
 from prefect import serve
 
 from .browser_job import browser_job_flow
+from .artifact_ingest import artifact_ingest_flow
 from .codex_search_report import codex_search_report_flow
 from .daily_brief import daily_brief_flow
 from .draft_article import substack_draft_flow
 from .paper_batch import paper_batch_flow
 from .paper_review import paper_review_flow
 from .research_report import research_report_flow
-from .search_report import search_report_flow
 from .registry import FLOW_SPECS
 
 
@@ -32,6 +32,10 @@ def main() -> None:
             name=FLOW_SPECS["browser_job_flow"].deployment_name,
             work_pool_name=FLOW_SPECS["browser_job_flow"].default_work_pool,
         ),
+        artifact_ingest_flow.to_deployment(
+            name=FLOW_SPECS["artifact_ingest_flow"].deployment_name,
+            work_pool_name=FLOW_SPECS["artifact_ingest_flow"].default_work_pool,
+        ),
         codex_search_report_flow.to_deployment(
             name=FLOW_SPECS["codex_search_report_flow"].deployment_name,
             work_pool_name=FLOW_SPECS["codex_search_report_flow"].default_work_pool,
@@ -43,10 +47,6 @@ def main() -> None:
         research_report_flow.to_deployment(
             name=FLOW_SPECS["research_report_flow"].deployment_name,
             work_pool_name=FLOW_SPECS["research_report_flow"].default_work_pool,
-        ),
-        search_report_flow.to_deployment(
-            name=FLOW_SPECS["search_report_flow"].deployment_name,
-            work_pool_name=FLOW_SPECS["search_report_flow"].default_work_pool,
         ),
     )
 

@@ -9,7 +9,12 @@ from libs.db import bootstrap_life_database
 
 def ensure_directories() -> None:
     settings = get_settings()
-    for path in (settings.artifact_root, settings.report_root, settings.runtime_root):
+    for path in (
+        settings.artifact_root,
+        settings.report_root,
+        settings.runtime_root,
+        settings.automation_prompt_root,
+    ):
         Path(path).mkdir(parents=True, exist_ok=True)
 
 

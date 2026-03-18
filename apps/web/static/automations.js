@@ -888,7 +888,7 @@ function flowNameForType(value) {
     return "paper_batch_flow";
   }
   if (value === "search_report") {
-    return "search_report_flow";
+    return "codex_search_report_flow";
   }
   return "daily_brief_flow";
 }

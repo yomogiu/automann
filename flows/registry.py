@@ -36,6 +36,12 @@ FLOW_SPECS: dict[str, FlowSpec] = {
         deployment_name="default",
         default_work_pool="browser-process",
     ),
+    "artifact_ingest_flow": FlowSpec(
+        key="artifact_ingest_flow",
+        slug="artifact-ingest",
+        deployment_name="default",
+        default_work_pool="mini-process",
+    ),
     "substack_draft_flow": FlowSpec(
         key="substack_draft_flow",
         slug="substack-draft",
@@ -51,12 +57,6 @@ FLOW_SPECS: dict[str, FlowSpec] = {
     "paper_batch_flow": FlowSpec(
         key="paper_batch_flow",
         slug="paper-batch",
-        deployment_name="default",
-        default_work_pool="mini-process",
-    ),
-    "search_report_flow": FlowSpec(
-        key="search_report_flow",
-        slug="search-report",
         deployment_name="default",
         default_work_pool="mini-process",
     ),

@@ -175,6 +175,171 @@ class APIWebFrontendTests(unittest.TestCase):
         self.research_csv_artifact = research_persisted_v2.artifacts[0]
         self.repository.promote_report_revision(self.research_report_v2.id)
 
+        source_canonical_uri = "file:///knowledge/source-note.md"
+        source_old_path = self.root / "artifacts" / "source-note-v1.md"
+        source_current_path = self.root / "artifacts" / "source-note-v2.md"
+        source_old_path.write_text("source note stale version\n", encoding="utf-8")
+        source_current_path.write_text("source note current version\n", encoding="utf-8")
+
+        source_run_v1 = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_old_path)}]},
+            status="running",
+        )
+        source_persisted_v1 = self.repository.persist_adapter_result(
+            source_run_v1.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_old_path),
+                        storage_uri=source_old_path.as_uri(),
+                        size_bytes=source_old_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": source_canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+                structured_outputs={
+                    "items": [
+                        {
+                            "input_index": 0,
+                            "input_kind": "file",
+                            "status": "completed",
+                            "canonical_uri": source_canonical_uri,
+                            "source_type": "markdown",
+                            "normalized_text_artifact_path": str(source_old_path),
+                            "chunk_count": 1,
+                            "warning_codes": [],
+                            "title": "Source note",
+                            "tags": ["markdown", "ingest"],
+                            "metadata": {"source_type": "markdown", "tags": ["markdown", "ingest"]},
+                            "chunks": [
+                                {
+                                    "ordinal": 0,
+                                    "text": "source note stale version",
+                                    "token_count": 4,
+                                    "metadata": {"canonical_uri": source_canonical_uri, "source_type": "markdown"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+        )
+        assert source_persisted_v1 is not None
+        self.source_legacy_artifact = source_persisted_v1.artifacts[0]
+
+        self.source_document = self.repository.upsert_source_document(
+            canonical_uri=source_canonical_uri,
+            source_type="markdown",
+            title="Source note v1",
+            author="Analyst",
+            current_text_artifact_id=self.source_legacy_artifact.id,
+            metadata_json={
+                "tags": ["markdown", "ingest"],
+                "entities": ["Analyst"],
+                "topics": ["source documents"],
+            },
+        )
+        self.repository.assign_artifact_to_source(self.source_legacy_artifact.id, self.source_document.id)
+        self.repository.upsert_chunks(
+            artifact_id=self.source_legacy_artifact.id,
+            chunks=[
+                {
+                    "ordinal": 0,
+                    "text": "source note stale version",
+                    "token_count": 4,
+                    "metadata": {"canonical_uri": source_canonical_uri, "source_type": "markdown"},
+                }
+            ],
+        )
+
+        source_run_v2 = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_current_path)}]},
+            status="running",
+        )
+        source_persisted_v2 = self.repository.persist_adapter_result(
+            source_run_v2.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_current_path),
+                        storage_uri=source_current_path.as_uri(),
+                        size_bytes=source_current_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": source_canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+                structured_outputs={
+                    "items": [
+                        {
+                            "input_index": 0,
+                            "input_kind": "file",
+                            "status": "completed",
+                            "canonical_uri": source_canonical_uri,
+                            "source_type": "markdown",
+                            "normalized_text_artifact_path": str(source_current_path),
+                            "chunk_count": 1,
+                            "warning_codes": [],
+                            "title": "Source note",
+                            "tags": ["markdown", "ingest"],
+                            "metadata": {"source_type": "markdown", "tags": ["markdown", "ingest"]},
+                            "chunks": [
+                                {
+                                    "ordinal": 0,
+                                    "text": "source note current version",
+                                    "token_count": 4,
+                                    "metadata": {"canonical_uri": source_canonical_uri, "source_type": "markdown"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+        )
+        assert source_persisted_v2 is not None
+        self.source_current_artifact = source_persisted_v2.artifacts[0]
+        self.source_document = self.repository.upsert_source_document(
+            canonical_uri=source_canonical_uri,
+            source_type="markdown",
+            title="Source note current",
+            author="Analyst",
+            current_text_artifact_id=self.source_current_artifact.id,
+            metadata_json={
+                "tags": ["markdown", "ingest"],
+                "entities": ["Analyst"],
+                "topics": ["source documents"],
+            },
+        )
+        self.repository.assign_artifact_to_source(self.source_current_artifact.id, self.source_document.id)
+        self.repository.upsert_chunks(
+            artifact_id=self.source_current_artifact.id,
+            chunks=[
+                {
+                    "ordinal": 0,
+                    "text": "source note current version",
+                    "token_count": 4,
+                    "metadata": {"canonical_uri": source_canonical_uri, "source_type": "markdown"},
+                }
+            ],
+        )
+
         self.client = TestClient(create_app())
 
     def tearDown(self) -> None:
@@ -198,6 +363,7 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("The Brewhouse Archive", response.text)
         self.assertIn('href="/automations"', response.text)
+        self.assertIn('href="/sources"', response.text)
 
         static_response = self.client.get("/static/app.css")
         self.assertEqual(static_response.status_code, 200)
@@ -211,6 +377,7 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertIn("The Brewhouse Automations", response.text)
         self.assertIn('href="/"', response.text)
         self.assertIn('href="/automations"', response.text)
+        self.assertIn('href="/sources"', response.text)
         self.assertIn("/static/automations.js", response.text)
         self.assertIn("/static/automations.css", response.text)
         self.assertIn('id="newAutomationButton"', response.text)
@@ -228,6 +395,50 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertIn(".automation-status-strip", style_response.text)
         self.assertIn(".automation-layout", style_response.text)
         self.assertIn(".editor-textarea", style_response.text)
+
+    def test_sources_route_and_api_surface_current_text_artifacts(self) -> None:
+        response = self.client.get("/sources")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("The Brewhouse Sources", response.text)
+        self.assertIn('href="/sources"', response.text)
+        self.assertIn("/static/sources.js", response.text)
+        self.assertIn("/static/sources.css", response.text)
+
+        list_response = self.client.get("/sources?limit=100", headers={"Accept": "application/json"})
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        self.assertEqual(len(list_payload["sources"]), 1)
+        listed_source = list_payload["sources"][0]
+        self.assertEqual(listed_source["id"], self.source_document.id)
+        self.assertEqual(listed_source["artifact_count"], 2)
+        self.assertEqual(listed_source["current_text_artifact_id"], self.source_current_artifact.id)
+        self.assertEqual(listed_source["metadata"]["tags"], ["markdown", "ingest"])
+
+        detail_response = self.client.get(
+            f"/sources/{self.source_document.id}",
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        detail_payload = detail_response.json()["source"]
+        self.assertEqual(detail_payload["id"], self.source_document.id)
+        self.assertEqual(detail_payload["artifact_count"], 2)
+        self.assertEqual(detail_payload["current_text_artifact"]["id"], self.source_current_artifact.id)
+        self.assertEqual(detail_payload["current_text_artifact"]["preview_url"], f"/artifacts/{self.source_current_artifact.id}/preview")
+        self.assertEqual(detail_payload["current_text_artifact"]["download_url"], f"/artifacts/{self.source_current_artifact.id}/download")
+        self.assertEqual(
+            {item["id"] for item in detail_payload["artifacts"]},
+            {self.source_current_artifact.id, self.source_legacy_artifact.id},
+        )
+        self.assertEqual([item["text"] for item in detail_payload["current_chunks"]], ["source note current version"])
+
+        preview_response = self.client.get(detail_payload["current_text_artifact"]["preview_url"])
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(preview_response.json()["status"], "text")
+        self.assertIn("source note current version", preview_response.json()["content"])
+
+        download_response = self.client.get(detail_payload["current_text_artifact"]["download_url"])
+        self.assertEqual(download_response.status_code, 200)
+        self.assertIn("source note current version", download_response.text)
 
     def test_report_frontend_supports_annotated_and_raw_modes(self) -> None:
         app_js = self.client.get("/static/app.js")
@@ -343,6 +554,99 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertEqual(payload["prompt"], "Create a 10 day Tokyo itinerary focused on food and museums.")
         self.assertEqual(payload["resume_from_run_id"], "run-123")
         self.assertEqual(payload["codex_session_id"], "session-explicit")
+
+    def test_command_route_accepts_artifact_ingest_requests(self) -> None:
+        submit_mock = AsyncMock(return_value={"run_id": "run-ingest", "status": "pending", "mode": "local"})
+        with patch.object(OrchestrationService, "submit_flow", submit_mock):
+            response = self.client.post(
+                "/commands/artifact-ingest",
+                json={
+                    "items": [
+                        {
+                            "input_kind": "inline",
+                            "content": "# Note\n\nA short markdown artifact.",
+                            "content_format": "markdown",
+                            "title": "Note",
+                            "tags": ["kb", "markdown"],
+                            "metadata": {"source": "unit-test"},
+                        }
+                    ]
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(submit_mock.await_args.kwargs["flow_name"], "artifact_ingest_flow")
+        payload = submit_mock.await_args.kwargs["parameters"]
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["input_kind"], "inline")
+        self.assertEqual(payload["items"][0]["content_format"], "markdown")
+        self.assertEqual(payload["items"][0]["title"], "Note")
+        self.assertEqual(payload["items"][0]["tags"], ["kb", "markdown"])
+
+    def test_query_knowledge_returns_ingested_source_chunks(self) -> None:
+        source_path = self.root / "artifacts" / "ingested-note.md"
+        source_path.write_text("shared ingest context for downstream research", encoding="utf-8")
+        canonical_uri = "file:///knowledge/ingested-note.md"
+
+        run = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_path)}]},
+            status="running",
+        )
+        persisted = self.repository.persist_adapter_result(
+            run.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_path),
+                        storage_uri=source_path.as_uri(),
+                        size_bytes=source_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+            ),
+        )
+        assert persisted is not None
+        artifact = persisted.artifacts[0]
+        source = self.repository.upsert_source_document(
+            canonical_uri=canonical_uri,
+            source_type="markdown",
+            title="Ingested note",
+            current_text_artifact_id=artifact.id,
+            metadata_json={"tags": ["kb"]},
+        )
+        self.repository.assign_artifact_to_source(artifact.id, source.id)
+        self.repository.upsert_chunks(
+            artifact_id=artifact.id,
+            chunks=[
+                {
+                    "ordinal": 0,
+                    "text": "shared ingest context for downstream research",
+                    "token_count": 6,
+                    "metadata": {"canonical_uri": canonical_uri, "source_type": "markdown"},
+                }
+            ],
+        )
+
+        response = self.client.post(
+            "/commands/query-knowledge",
+            json={"query": "downstream research", "limit": 5},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["query"], "downstream research")
+        self.assertEqual(len(payload["results"]), 1)
+        self.assertIn("shared ingest context", payload["results"][0]["text"])
 
     def test_browser_job_route_accepts_extended_payload_shape(self) -> None:
         submit_mock = AsyncMock(return_value={"run_id": "run-browser", "status": "pending", "mode": "prefect"})
