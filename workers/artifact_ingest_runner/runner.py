@@ -40,7 +40,31 @@ except Exception:  # pragma: no cover - optional dependency at runtime
     trafilatura = None
 
 
-_TRACKING_QUERY_KEYS = {"fbclid", "gclid"}
+_TRACKING_QUERY_KEYS = {
+    "fbclid",
+    "gclid",
+    "dclid",
+    "yclid",
+    "msclkid",
+    "ttclid",
+    "twclid",
+    "igshid",
+    "mkt_tok",
+    "_ga",
+    "_gid",
+    "_gl",
+    "__hsfp",
+    "__hssc",
+    "__hstc",
+    "_hsenc",
+    "_hsmi",
+    "mc_cid",
+    "mc_eid",
+    "ocid",
+    "s_kwcid",
+    "s_client",
+}
+_TRACKING_QUERY_PREFIXES = ("utm_", "mc_", "hsa_", "pk_", "cmpid", "sourceid", "ref_", "wbraid", "gbraid")
 _WHITESPACE_RE = re.compile(r"\s+")
 _ENTITY_RE = re.compile(r"\b(?:[A-Z][A-Za-z0-9&.-]+(?:\s+[A-Z][A-Za-z0-9&.-]+)+)\b")
 
@@ -724,10 +748,19 @@ class ArtifactIngestRunner:
         query = [
             (key, value)
             for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-            if key and not key.startswith("utm_") and key not in _TRACKING_QUERY_KEYS
+            if key and not ArtifactIngestRunner._is_tracking_query_param(key)
         ]
         normalized = parsed._replace(fragment="", query=urlencode(query, doseq=True))
         return urlunparse(normalized)
+
+    @staticmethod
+    def _is_tracking_query_param(value: str) -> bool:
+        key = (value or "").strip().lower()
+        if not key:
+            return False
+        if key in _TRACKING_QUERY_KEYS:
+            return True
+        return key.startswith(_TRACKING_QUERY_PREFIXES)
 
     @staticmethod
     def _normalize_text(text: str) -> str:

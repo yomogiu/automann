@@ -404,7 +404,10 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertIn("/static/sources.js", response.text)
         self.assertIn("/static/sources.css", response.text)
 
-        list_response = self.client.get("/sources?limit=100", headers={"Accept": "application/json"})
+        list_response = self.client.get(
+            "/sources?limit=100&include_metadata=true",
+            headers={"Accept": "application/json"},
+        )
         self.assertEqual(list_response.status_code, 200)
         list_payload = list_response.json()
         self.assertEqual(len(list_payload["sources"]), 1)
@@ -413,6 +416,16 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertEqual(listed_source["artifact_count"], 2)
         self.assertEqual(listed_source["current_text_artifact_id"], self.source_current_artifact.id)
         self.assertEqual(listed_source["metadata"]["tags"], ["markdown", "ingest"])
+
+        hidden_response = self.client.get(
+            "/sources?limit=100",
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(hidden_response.status_code, 200)
+        hidden_payload = hidden_response.json()
+        hidden_source = hidden_payload["sources"][0]
+        self.assertNotIn("metadata", hidden_source)
+        self.assertNotIn("source_profile", hidden_source)
 
         detail_response = self.client.get(
             f"/sources/{self.source_document.id}",
