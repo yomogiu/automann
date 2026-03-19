@@ -273,10 +273,12 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         self.assertIsNotNone(result["report"]["current_report_id"])
         self.assertEqual(result["orchestration"]["enabled_sources"], ["local_knowledge"])
         self.assertTrue(result["orchestration"]["local_knowledge_enabled"])
+        self.assertFalse(result["orchestration"]["codex_web_search_enabled"])
         self.assertEqual(result["ingest_handoff"]["status"], "completed")
         self.assertEqual(result["ingest_handoff"]["ingested_count"], 1)
         self.assertIn("report_path", result["artifacts"])
         self.assertIn("memo_path", result["artifacts"])
+        self.assertFalse(fake_runner.requests[0].enable_search)
 
         current = self.repository.current_report_revision(f"search-report:{parent.id}")
         self.assertIsNotNone(current)
@@ -337,6 +339,8 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         self.assertIn('"orchestration": {', fake_runner.requests[0].prompt)
         self.assertEqual(result["orchestration"]["enabled_sources"], ["local_knowledge"])
         self.assertGreaterEqual(result["orchestration"]["local_retrieval_count"], 1)
+        self.assertFalse(result["orchestration"]["codex_web_search_enabled"])
+        self.assertFalse(fake_runner.requests[0].enable_search)
 
     def test_browser_only_flow_skips_local_retrieval_and_caps_sources(self) -> None:
         parent = self.repository.start_run(
@@ -384,12 +388,14 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["orchestration"]["enabled_sources"], ["browser_web"])
         self.assertFalse(result["orchestration"]["local_knowledge_enabled"])
+        self.assertTrue(result["orchestration"]["codex_web_search_enabled"])
         self.assertEqual(result["orchestration"]["source_count"], 2)
         self.assertTrue(result["orchestration"]["source_limit_hit"])
         self.assertEqual([item["url"] for item in result["handoff"]["sources"]], ["https://example.one", "https://example.two"])
         self.assertEqual(result["ingest_handoff"]["status"], "completed")
         self.assertEqual(result["ingest_handoff"]["attempted_count"], 2)
         self.assertEqual(result["ingest_handoff"]["browser_fallback_attempted_count"], 0)
+        self.assertTrue(fake_runner.requests[0].enable_search)
         self.assertIn('"enabled_sources": [', fake_runner.requests[0].prompt)
         self.assertIn('"browser_web"', fake_runner.requests[0].prompt)
         self.assertIn('"planner_enabled": false', fake_runner.requests[0].prompt)
@@ -401,7 +407,7 @@ class CodexSearchReportFlowTests(unittest.TestCase):
         self.assertEqual(current.metadata_json["orchestration"]["enabled_sources"], ["browser_web"])
         self.assertTrue(current.metadata_json["source_limit_hit"])
 
-    def test_browser_fallback_runs_after_direct_ingest_failure(self) -> None:
+    def test_browser_web_does_not_spawn_browser_flow_after_ingest_failure(self) -> None:
         parent = self.repository.start_run(
             flow_name="codex_search_report_flow",
             worker_key="mini-process",
@@ -452,23 +458,6 @@ class CodexSearchReportFlowTests(unittest.TestCase):
                     "reports": [],
                     "next_events": [],
                 }
-            if flow_name == "browser_job_flow":
-                return {
-                    "run_id": "child-browser",
-                    "parent_run_id": parent_run_id,
-                    "task_spec_id": None,
-                    "status": "completed",
-                    "structured_outputs": {
-                        "ingest_handoff": {
-                            "status": "completed",
-                            "source_document_ids": ["source-browser-1"],
-                        }
-                    },
-                    "artifacts": [],
-                    "observations": [],
-                    "reports": [],
-                    "next_events": [],
-                }
             raise AssertionError(f"unexpected child flow: {flow_name}")
 
         with patch("flows.codex_search_report.execute_adapter", side_effect=self._execute_adapter_inline):
@@ -486,12 +475,14 @@ class CodexSearchReportFlowTests(unittest.TestCase):
                     )
 
         self.assertEqual(result["status"], "completed")
-        self.assertEqual([item[0] for item in child_calls], ["artifact_ingest_flow", "browser_job_flow"])
-        self.assertEqual(result["ingest_handoff"]["status"], "completed")
+        self.assertEqual([item[0] for item in child_calls], ["artifact_ingest_flow"])
+        self.assertEqual(result["ingest_handoff"]["status"], "degraded")
         self.assertEqual(result["ingest_handoff"]["failed_count"], 1)
-        self.assertEqual(result["ingest_handoff"]["browser_fallback_attempted_count"], 1)
-        self.assertEqual(result["ingest_handoff"]["browser_fallback_completed_count"], 1)
-        self.assertEqual(result["ingest_handoff"]["source_document_ids"], ["source-browser-1"])
+        self.assertEqual(result["ingest_handoff"]["browser_fallback_attempted_count"], 0)
+        self.assertEqual(result["ingest_handoff"]["browser_fallback_completed_count"], 0)
+        self.assertEqual(result["ingest_handoff"]["source_document_ids"], [])
+        self.assertIn("direct_ingest_partial", result["ingest_handoff"]["warning_codes"])
+        self.assertTrue(fake_runner.requests[0].enable_search)
 
     def test_resume_prefers_prior_run_session_id_and_creates_new_revision(self) -> None:
         fake_runner = _FakeSessionRunner(

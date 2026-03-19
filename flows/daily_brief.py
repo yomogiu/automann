@@ -129,6 +129,7 @@ def daily_brief_flow(request: dict[str, Any] | None = None, run_id: str | None =
             news_items=list(news_result.get("structured_outputs", {}).get("items", [])),
             papers=list(arxiv_result.get("structured_outputs", {}).get("papers", [])),
             browser_summary=browser_result.get("structured_outputs"),
+            brief_metadata=dict(brief_request.metadata),
             previous_report={
                 "id": latest_report.id,
                 "title": latest_report.title,

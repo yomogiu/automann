@@ -361,9 +361,11 @@ class APIWebFrontendTests(unittest.TestCase):
     def test_root_serves_brewhouse_frontend(self) -> None:
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("The Brewhouse Archive", response.text)
-        self.assertIn('href="/automations"', response.text)
+        self.assertIn("Mnemosyne Archive", response.text)
+        self.assertIn("<em>M</em>n<em>emo</em>syne", response.text)
+        self.assertIn('href="/research"', response.text)
         self.assertIn('href="/sources"', response.text)
+        self.assertNotIn('href="/automations"', response.text)
 
         static_response = self.client.get("/static/app.css")
         self.assertEqual(static_response.status_code, 200)
@@ -374,10 +376,8 @@ class APIWebFrontendTests(unittest.TestCase):
     def test_automations_route_serves_separate_frontend_shell(self) -> None:
         response = self.client.get("/automations")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("The Brewhouse Automations", response.text)
-        self.assertIn('href="/"', response.text)
-        self.assertIn('href="/automations"', response.text)
-        self.assertIn('href="/sources"', response.text)
+        self.assertIn("Mnemosyne Automations", response.text)
+        self.assertIn("<em>M</em>n<em>emo</em>syne", response.text)
         self.assertIn("/static/automations.js", response.text)
         self.assertIn("/static/automations.css", response.text)
         self.assertIn('id="newAutomationButton"', response.text)
@@ -396,11 +396,36 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertIn(".automation-layout", style_response.text)
         self.assertIn(".editor-textarea", style_response.text)
 
+    def test_research_route_serves_workbench_shell(self) -> None:
+        response = self.client.get("/research")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/static/research.js", response.text)
+        self.assertIn("/static/research.css", response.text)
+        self.assertIn('id="researchFlash"', response.text)
+        self.assertIn('id="researchTabButton"', response.text)
+        self.assertIn('id="ingestTabButton"', response.text)
+
+        script_response = self.client.get("/static/research.js")
+        self.assertEqual(script_response.status_code, 200)
+        self.assertIn('getQueryParam("run_id")', script_response.text)
+        self.assertIn('"/commands/"', script_response.text)
+        self.assertIn('"search-report"', script_response.text)
+        self.assertIn('"research-report"', script_response.text)
+        self.assertIn('"/commands/artifact-ingest"', script_response.text)
+        self.assertIn('"/runs?limit=25"', script_response.text)
+
+        style_response = self.client.get("/static/research.css")
+        self.assertEqual(style_response.status_code, 200)
+        self.assertGreater(len(style_response.text), 0)
+
     def test_sources_route_and_api_surface_current_text_artifacts(self) -> None:
         response = self.client.get("/sources")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("The Brewhouse Sources", response.text)
+        self.assertIn("Mnemosyne Sources", response.text)
+        self.assertIn("<em>M</em>n<em>emo</em>syne", response.text)
         self.assertIn('href="/sources"', response.text)
+        self.assertIn('href="/research"', response.text)
+        self.assertNotIn('href="/automations"', response.text)
         self.assertIn("/static/sources.js", response.text)
         self.assertIn("/static/sources.css", response.text)
 
@@ -453,6 +478,36 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertEqual(download_response.status_code, 200)
         self.assertIn("source note current version", download_response.text)
 
+        sources_js = self.client.get("/static/sources.js")
+        self.assertEqual(sources_js.status_code, 200)
+        self.assertIn('getQueryParam("source_id")', sources_js.text)
+        self.assertIn("loadSourceRecord", sources_js.text)
+        self.assertIn("loadSourceDetail", sources_js.text)
+        self.assertIn("/sources/${encodeURIComponent(sourceId)}", sources_js.text)
+
+        self.assertIn('data-action="delete-source"', sources_js.text)
+        self.assertIn('"DELETE"', sources_js.text)
+
+    def test_delete_source_endpoint_removes_source_from_db_and_list(self) -> None:
+        delete_response = self.client.delete(f"/sources/{self.source_document.id}", headers={"Accept": "application/json"})
+        self.assertEqual(delete_response.status_code, 200)
+        delete_payload = delete_response.json()
+        self.assertEqual(delete_payload, {"id": self.source_document.id, "deleted": True})
+
+        missing_response = self.client.delete("/sources/not-a-source", headers={"Accept": "application/json"})
+        self.assertEqual(missing_response.status_code, 404)
+
+        list_response = self.client.get("/sources?limit=100", headers={"Accept": "application/json"})
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        self.assertEqual(list_payload["sources"], [])
+
+        detail_response = self.client.get(
+            f"/sources/{self.source_document.id}",
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(detail_response.status_code, 404)
+
     def test_report_frontend_supports_annotated_and_raw_modes(self) -> None:
         app_js = self.client.get("/static/app.js")
         self.assertEqual(app_js.status_code, 200)
@@ -461,6 +516,16 @@ class APIWebFrontendTests(unittest.TestCase):
         self.assertIn("annotated_html_artifact_id", app_js.text)
         self.assertIn("Annotated paper presentation", app_js.text)
         self.assertIn("Markdown preview", app_js.text)
+        self.assertIn("window.open(reportDownloadUrl(report), \"_blank\", \"noopener,noreferrer\")", app_js.text)
+        self.assertIn("report.source_artifact_id", app_js.text)
+        self.assertIn('return `/artifacts/${encodeURIComponent(report.source_artifact_id)}/download`;', app_js.text)
+        self.assertIn('getQueryParam("report_id")', app_js.text)
+        self.assertIn("loadArchivedReport", app_js.text)
+        self.assertIn("/reports/${encodeURIComponent(reportId)}", app_js.text)
+
+        app_css = self.client.get("/static/app.css")
+        self.assertEqual(app_css.status_code, 200)
+        self.assertIn(".flash-message", app_css.text)
 
     def test_detail_endpoints_back_frontend_views(self) -> None:
         run_response = self.client.get(f"/runs/{self.run.id}")

@@ -7,6 +7,7 @@ from libs.db import LifeRepository, engine_for_url
 from libs.retrieval import RetrievalService
 
 from .automation_service import AutomationService
+from .codex_session_service import CodexSessionService
 from .services import OrchestrationService
 
 
@@ -28,7 +29,17 @@ def retrieval_dep() -> RetrievalService:
 
 @lru_cache
 def orchestration_dep() -> OrchestrationService:
-    return OrchestrationService(settings_dep(), repository_dep(), retrieval_dep())
+    return OrchestrationService(
+        settings_dep(),
+        repository_dep(),
+        retrieval_dep(),
+        codex_session_service=codex_session_dep(),
+    )
+
+
+@lru_cache
+def codex_session_dep() -> CodexSessionService:
+    return CodexSessionService(settings_dep(), repository_dep())
 
 
 @lru_cache

@@ -742,7 +742,7 @@ function renderTypeSpecificFields(automationType, payload) {
           <div class="structured-label">Enabled sources</div>
           <div class="toggle-list">
             ${checkboxField("Local knowledge", "Use the local retrieval corpus", "payload", "enabled_sources", "local_knowledge", hasSource(payload, "local_knowledge"))}
-            ${checkboxField("Browser web", "Allow browser-backed web search inside Prefect", "payload", "enabled_sources", "browser_web", hasSource(payload, "browser_web"))}
+            ${checkboxField("Web search", "Allow Codex web search for non-browser research queries", "payload", "enabled_sources", "browser_web", hasSource(payload, "browser_web"))}
             ${toggleField("Planner enabled", "Let Codex plan and expand the search within the enabled source set", "payload", "planner_enabled", payload.planner_enabled !== false)}
           </div>
         </div>

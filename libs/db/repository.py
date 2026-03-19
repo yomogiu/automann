@@ -10,6 +10,7 @@ from sqlalchemy import Select, delete, desc, or_, select, text, update
 from sqlalchemy.engine import Engine
 
 from libs.contracts.models import SCHEMA_VERSION, AdapterResult, ArtifactRecord, ObservationRecord, ReportRecord
+from libs.contracts.models import RunCodexSession
 from libs.report_taxonomy import FILTER_KIND, TAG_KIND, classify_report_taxonomy, taxonomy_payload
 
 from .models import (
@@ -190,6 +191,31 @@ class LifeRepository:
         with session_scope(self.engine) as session:
             return session.get(RunRecord, run_id)
 
+    def get_run_codex_session(self, run_id: str) -> RunCodexSession | None:
+        with session_scope(self.engine) as session:
+            record = session.get(RunRecord, run_id)
+            if record is None:
+                return None
+            if not any(
+                (
+                    record.codex_thread_id,
+                    record.codex_active_turn_id,
+                    record.codex_session_key,
+                    record.codex_state,
+                    record.codex_pending_request_id,
+                    record.codex_last_event_at,
+                )
+            ):
+                return None
+            return RunCodexSession(
+                codex_thread_id=record.codex_thread_id,
+                codex_active_turn_id=record.codex_active_turn_id,
+                codex_session_key=record.codex_session_key,
+                codex_state=record.codex_state,
+                codex_pending_request_id=record.codex_pending_request_id,
+                codex_last_event_at=record.codex_last_event_at,
+            )
+
     def get_report(self, report_id: str) -> Report | None:
         with session_scope(self.engine) as session:
             return session.get(Report, report_id)
@@ -221,6 +247,23 @@ class LifeRepository:
         with session_scope(self.engine) as session:
             stmt = select(SourceDocument).where(SourceDocument.canonical_uri == canonical_uri.strip()).limit(1)
             return session.scalars(stmt).first()
+
+    def delete_source_document(self, source_id: str) -> bool:
+        with session_scope(self.engine) as session:
+            record = session.get(SourceDocument, source_id)
+            if record is None:
+                return False
+
+            session.execute(
+                update(Artifact)
+                .where(Artifact.source_document_id == source_id)
+                .values(source_document_id=None)
+            )
+
+            record.current_text_artifact_id = None
+            session.delete(record)
+            session.flush()
+            return True
 
     def get_interaction(self, interaction_id: str) -> Interaction | None:
         with session_scope(self.engine) as session:
@@ -540,6 +583,37 @@ class LifeRepository:
                 record.started_at = datetime.now(timezone.utc)
             if status in {"completed", "failed", "skipped"}:
                 record.finished_at = datetime.now(timezone.utc)
+            session.flush()
+            session.refresh(record)
+            return record
+
+    def update_run_codex_session(
+        self,
+        run_id: str,
+        *,
+        codex_thread_id: str | None | object = _MISSING,
+        codex_active_turn_id: str | None | object = _MISSING,
+        codex_session_key: str | None | object = _MISSING,
+        codex_state: str | None | object = _MISSING,
+        codex_pending_request_id: str | None | object = _MISSING,
+        codex_last_event_at: datetime | None | object = _MISSING,
+    ) -> RunRecord | None:
+        with session_scope(self.engine) as session:
+            record = session.get(RunRecord, run_id)
+            if not record:
+                return None
+            updates = {
+                "codex_thread_id": codex_thread_id,
+                "codex_active_turn_id": codex_active_turn_id,
+                "codex_session_key": codex_session_key,
+                "codex_state": codex_state,
+                "codex_pending_request_id": codex_pending_request_id,
+                "codex_last_event_at": codex_last_event_at,
+            }
+            for field_name, value in updates.items():
+                if value is _MISSING:
+                    continue
+                setattr(record, field_name, value)
             session.flush()
             session.refresh(record)
             return record

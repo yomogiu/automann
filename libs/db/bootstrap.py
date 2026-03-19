@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlalchemy import inspect
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
@@ -64,6 +65,15 @@ SQLITE_TASK_SPEC_AUTOMATION_DDL = (
     "ALTER TABLE task_spec ADD COLUMN prefect_deployment_name VARCHAR(255)",
     "ALTER TABLE task_spec ADD COLUMN prefect_deployment_path VARCHAR(255)",
     "ALTER TABLE task_spec ADD COLUMN prefect_deployment_url VARCHAR(2048)",
+)
+
+SQLITE_RUN_CODEX_SESSION_DDL = (
+    "ALTER TABLE run ADD COLUMN codex_thread_id VARCHAR(255)",
+    "ALTER TABLE run ADD COLUMN codex_active_turn_id VARCHAR(255)",
+    "ALTER TABLE run ADD COLUMN codex_session_key VARCHAR(255)",
+    "ALTER TABLE run ADD COLUMN codex_state VARCHAR(64)",
+    "ALTER TABLE run ADD COLUMN codex_pending_request_id VARCHAR(255)",
+    "ALTER TABLE run ADD COLUMN codex_last_event_at DATETIME",
 )
 
 
@@ -150,6 +160,29 @@ def _bootstrap_task_spec_automation_fields(engine: Engine) -> None:
             connection.exec_driver_sql(statement)
 
 
+def _bootstrap_run_codex_session_fields(engine: Engine) -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            existing_columns = {
+                row["name"]
+                for row in connection.exec_driver_sql("PRAGMA table_info('run')").mappings()
+            }
+            for statement in SQLITE_RUN_CODEX_SESSION_DDL:
+                column_name = statement.split(" ADD COLUMN ", maxsplit=1)[1].split(" ", maxsplit=1)[0]
+                if column_name in existing_columns:
+                    continue
+                connection.exec_driver_sql(statement)
+        return
+
+    with engine.begin() as connection:
+        existing_columns = {column["name"] for column in inspect(connection).get_columns("run")}
+        for statement in SQLITE_RUN_CODEX_SESSION_DDL:
+            column_name = statement.split(" ADD COLUMN ", maxsplit=1)[1].split(" ", maxsplit=1)[0]
+            if column_name in existing_columns:
+                continue
+            connection.exec_driver_sql(statement)
+
+
 def bootstrap_report_taxonomy(engine: Engine) -> None:
     with engine.begin() as connection:
         existing_keys = set(connection.execute(select(ReportTaxonomyTerm.key)).scalars())
@@ -181,6 +214,7 @@ def bootstrap_life_database(settings: Settings) -> None:
     Base.metadata.create_all(engine)
     _bootstrap_sqlite_support(engine)
     _bootstrap_task_spec_automation_fields(engine)
+    _bootstrap_run_codex_session_fields(engine)
     _bootstrap_artifact_source_documents(engine)
     _bootstrap_report_revisions(engine)
     bootstrap_report_taxonomy(engine)

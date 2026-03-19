@@ -13,7 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindElements();
   bindEvents();
   setTodayDate();
-  void loadSources();
+  void loadSources(getQueryParam("source_id"));
 });
 
 function bindElements() {
@@ -39,10 +39,29 @@ function bindEvents() {
   });
 
   elements.resultArea.addEventListener("click", (event) => {
-    const row = event.target.closest("[data-source-id]");
+    const deleteButton = event.target.closest("button[data-action='delete-source']");
+    if (deleteButton) {
+      const sourceId = deleteButton.dataset.sourceId || "";
+      if (!sourceId) {
+        return;
+      }
+
+      const sourceRecord = state.sources.find((source) => source.id === sourceId);
+      const sourceTitle = sourceRecord
+        ? sourceRecord.title || sourceRecord.canonical_uri || "this source"
+        : "this source";
+
+      if (sourceId) {
+        void deleteSource(sourceId, sourceTitle);
+      }
+      return;
+    }
+
+    const row = event.target.closest(".doc-row[data-source-id]");
     if (!row) {
       return;
     }
+
     const sourceId = row.dataset.sourceId;
     if (state.selectedId === sourceId) {
       state.selectedId = null;
@@ -63,13 +82,26 @@ function setTodayDate() {
   });
 }
 
-async function loadSources() {
+async function loadSources(targetSourceId = null) {
   state.loading = true;
   renderLoadingState();
   try {
     const payload = await fetchJSON("/sources?limit=100");
     state.sources = Array.isArray(payload.sources) ? payload.sources : [];
-    state.selectedId = state.sources.some((source) => source.id === state.selectedId) ? state.selectedId : null;
+    const desiredSelectedId = targetSourceId || state.selectedId;
+    state.selectedId = state.sources.some((source) => source.id === desiredSelectedId) ? desiredSelectedId : null;
+
+    if (targetSourceId && state.selectedId !== targetSourceId) {
+      const source = await loadSourceRecord(targetSourceId);
+      if (source) {
+        state.sources = [source, ...state.sources.filter((item) => item.id !== source.id)];
+        state.selectedId = source.id;
+        await loadSourceDetail(source.id, source);
+      }
+    } else if (targetSourceId) {
+      await loadSourceDetail(targetSourceId);
+    }
+
     renderSources();
   } catch (error) {
     state.sources = [];
@@ -85,9 +117,19 @@ async function loadSources() {
   }
 }
 
-async function loadSourceDetail(sourceId) {
+async function loadSourceRecord(sourceId) {
   try {
-    const payload = await fetchJSON(`/sources/${sourceId}`);
+    const payload = await fetchJSON(`/sources/${encodeURIComponent(sourceId)}`);
+    return payload.source || null;
+  } catch (error) {
+    showFlash(`Could not load source detail: ${error.message || String(error)}`, true);
+    return null;
+  }
+}
+
+async function loadSourceDetail(sourceId, sourceRecord = null) {
+  try {
+    const payload = sourceRecord ? { source: sourceRecord } : await fetchJSON(`/sources/${encodeURIComponent(sourceId)}`);
     const source = payload.source || null;
     if (!source) {
       throw new Error("Source detail payload was empty.");
@@ -206,12 +248,13 @@ function buildStatusText(count, hasQuery) {
 function renderSourceRow(source) {
   const selected = source.id === state.selectedId ? " is-selected" : "";
   const detail = source.id === state.selectedId ? renderSourceDetail(source) : "";
+  const title = escapeHTML(source.title || source.canonical_uri || "Untitled source");
   return `
     <div class="doc-row-wrap">
-      <button class="doc-row${selected}" type="button" data-source-id="${escapeHTML(source.id)}">
+      <div class="doc-row${selected}" data-source-id="${escapeHTML(source.id)}" role="button" tabindex="0">
         <div class="doc-main">
           <div class="doc-source">${escapeHTML(source.source_type || "Source")}</div>
-          <div class="doc-title">${escapeHTML(source.title || source.canonical_uri || "Untitled source")}</div>
+          <div class="doc-title">${title}</div>
           <div class="doc-desc">${escapeHTML(source.canonical_uri || "No canonical URI stored.")}</div>
           <div class="doc-tags">
             ${renderSourceTags(source)}
@@ -219,11 +262,44 @@ function renderSourceRow(source) {
         </div>
         <div class="doc-right">
           <div class="doc-date">${escapeHTML(formatDate(source.updated_at || source.created_at))}</div>
+          <div class="doc-actions">
+            <button
+              class="inline-button inline-button-danger"
+              type="button"
+              data-action="delete-source"
+              data-source-id="${escapeHTML(source.id)}"
+            >
+              Delete
+            </button>
+          </div>
         </div>
-      </button>
+      </div>
       ${detail}
     </div>
   `;
+}
+
+async function deleteSource(sourceId, sourceTitle = "this source") {
+  if (!window.confirm(`Delete "${sourceTitle}"? This will remove it from the source list and database.`)) {
+    return;
+  }
+
+  try {
+    await fetchJSON(`/sources/${encodeURIComponent(sourceId)}`, {
+      method: "DELETE",
+    });
+
+    state.sources = state.sources.filter((source) => source.id !== sourceId);
+    delete state.detailsById[sourceId];
+    delete state.previewsById[sourceId];
+    if (state.selectedId === sourceId) {
+      state.selectedId = null;
+    }
+    renderSources();
+    showFlash(`Deleted ${sourceTitle}.`);
+  } catch (error) {
+    showFlash(`Could not delete source: ${error.message || String(error)}`, true);
+  }
 }
 
 function renderSourceTags(source) {
@@ -422,9 +498,19 @@ function hideFlash() {
   elements.flashMessage.classList.remove("is-error");
 }
 
-async function fetchJSON(url) {
+function getQueryParam(name) {
+  const value = new URL(window.location.href).searchParams.get(name);
+  return value ? value.trim() : null;
+}
+
+async function fetchJSON(url, options = {}) {
   const response = await fetch(url, {
-    headers: { Accept: "application/json" },
+    method: options.method || "GET",
+    ...options,
+    headers: {
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
   });
   if (!response.ok) {
     const text = await response.text();

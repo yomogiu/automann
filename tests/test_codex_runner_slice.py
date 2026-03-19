@@ -32,7 +32,10 @@ class CodexRunnerSliceTests(unittest.TestCase):
             self.assertEqual(result.structured_outputs["mode"], "plain-text")
             run_mock.assert_called_once()
             command = run_mock.call_args[0][0]
-            self.assertEqual(command, ["codex", "exec", "hello world", "--temperature", "0.2"])
+            self.assertEqual(
+                command,
+                ["codex", "exec", "--skip-git-repo-check", "--temperature", "0.2", "hello world"],
+            )
 
     def test_structured_mode_builds_json_schema_command(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -70,9 +73,20 @@ class CodexRunnerSliceTests(unittest.TestCase):
             command = run_mock.call_args[0][0]
             self.assertEqual(command[-1], "analyze paper")
             self.assertEqual(command[:2], ["codex", "exec"])
+            self.assertIn("--skip-git-repo-check", command)
             self.assertIn("--model", command)
             self.assertIn("gpt-5.4", command)
             self.assertTrue(any(item.kind == "json" for item in result.artifact_manifest))
+
+    def test_build_command_does_not_duplicate_skip_git_repo_check(self) -> None:
+        command = CodexCliRunner._build_command(
+            CodexCliRequest(
+                prompt="hello world",
+                extra_args=["--skip-git-repo-check", "--model", "gpt-5.4"],
+            )
+        )
+
+        self.assertEqual(command.count("--skip-git-repo-check"), 1)
 
     def test_structured_mode_requires_schema_and_output_path_together(self) -> None:
         with self.assertRaises(ValueError):
@@ -80,10 +94,11 @@ class CodexRunnerSliceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CodexCliRequest(prompt="x", output_path="/tmp/out.json")
 
-    def test_load_paper_review_prompt_mentions_required_lenses(self) -> None:
+    def test_load_paper_review_prompt_mentions_report_and_clarity_constraints(self) -> None:
         prompt = load_paper_review_prompt()
-        self.assertIn("cs50_student", prompt)
-        self.assertIn("senior_engineer", prompt)
-        self.assertIn("staff_ml_engineer", prompt)
+        self.assertIn('"report"', prompt)
+        self.assertIn('"executive_summary"', prompt)
+        self.assertIn("whole document", prompt.lower())
         self.assertIn("serious learner", prompt.lower())
         self.assertIn("inference", prompt.lower())
+        self.assertIn("do not turn every concept", prompt.lower())

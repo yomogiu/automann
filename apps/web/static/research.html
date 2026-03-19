@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mnemosyne Research</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/research.css">
+  <script src="/static/research.js" defer></script>
+</head>
+<body>
+  <main class="app research-app">
+    <header class="masthead">
+      <div class="masthead-top">
+        <div>
+          <div class="brand"><em>M</em>n<em>emo</em>syne</div>
+          <div class="tagline">Research Workbench &mdash; Reports, search, and ingestion</div>
+        </div>
+        <div class="meta-row">
+          <span>End-user control plane</span>
+          <span id="researchRunCount">&mdash; runs</span>
+          <span id="researchTodayDate"></span>
+        </div>
+      </div>
+      <nav class="masthead-nav" aria-label="Primary">
+        <a class="nav-chip is-active" href="/research">Research</a>
+        <a class="nav-chip" href="/">Archive</a>
+        <a class="nav-chip" href="/sources">Sources</a>
+      </nav>
+    </header>
+
+    <div id="researchFlash" class="flash-message" hidden></div>
+
+    <section class="research-hero">
+      <div>
+        <div class="section-kicker">Workbench</div>
+        <h1 class="section-title">Run research, surface reports, and ingest source material without leaving the site.</h1>
+      </div>
+      <div class="hero-note">
+        The website owns the end-user workflow. Prefect remains the execution backend.
+      </div>
+    </section>
+
+    <section class="research-tabs" aria-label="Work modes">
+      <button class="tab-button is-active" id="researchTabButton" type="button">Research</button>
+      <button class="tab-button" id="ingestTabButton" type="button">Ingest</button>
+    </section>
+
+    <section class="research-grid">
+      <div class="composer-column">
+        <section class="panel" id="researchTabPanel" aria-labelledby="researchTabButton">
+          <div class="panel-head">
+            <div>
+              <div class="panel-kicker">Research</div>
+              <h2 class="panel-title">Compose a search or report run</h2>
+            </div>
+            <div class="panel-meta">
+              <label class="inline-label" for="researchModeSelect">Mode</label>
+              <select id="researchModeSelect" class="control">
+                <option value="search_report">Search report</option>
+                <option value="research_report">Structured report</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="searchFields" class="field-stack">
+            <label class="field">
+              <span class="field-label">Prompt</span>
+              <textarea id="searchPrompt" class="control control-textarea" rows="8" placeholder="Create a 10 day trip itinerary in Tokyo."></textarea>
+            </label>
+
+            <div class="toggle-row" role="group" aria-label="Search sources">
+              <label class="checkbox-pill">
+                <input id="searchLocalKnowledge" type="checkbox" checked>
+                <span>Local knowledge</span>
+              </label>
+              <label class="checkbox-pill">
+                <input id="searchBrowserWeb" type="checkbox">
+                <span>Web search</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="reportFields" class="field-stack" hidden>
+            <label class="field">
+              <span class="field-label">Theme</span>
+              <input id="reportTheme" class="control" type="text" placeholder="EU jobs at risk from AI">
+            </label>
+
+            <label class="field">
+              <span class="field-label">Boundaries</span>
+              <textarea id="reportBoundaries" class="control control-textarea" rows="4" placeholder="EU only&#10;Public sources only"></textarea>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Areas of interest</span>
+              <textarea id="reportAreas" class="control control-textarea" rows="4" placeholder="employment trends&#10;exposed occupations&#10;policy implications"></textarea>
+            </label>
+          </div>
+
+          <div class="form-actions research-submit-row">
+            <button id="submitResearchButton" class="btn btn-brew" type="button">Run research</button>
+          </div>
+        </section>
+
+        <section class="panel" id="ingestTabPanel" aria-labelledby="ingestTabButton" hidden>
+          <div class="panel-head">
+            <div>
+              <div class="panel-kicker">Ingest</div>
+              <h2 class="panel-title">Capture a source into retrieval</h2>
+            </div>
+            <div class="panel-meta">
+              <label class="inline-label" for="ingestModeSelect">Input</label>
+              <select id="ingestModeSelect" class="control">
+                <option value="url">URL</option>
+                <option value="paste">Paste</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="ingestUrlFields" class="field-stack">
+            <label class="field">
+              <span class="field-label">URL</span>
+              <input id="ingestUrl" class="control" type="url" placeholder="https://example.com/article">
+            </label>
+          </div>
+
+          <div id="ingestPasteFields" class="field-stack" hidden>
+            <label class="field">
+              <span class="field-label">Content</span>
+              <textarea id="ingestContent" class="control control-textarea" rows="8" placeholder="# Article title&#10;&#10;Paste markdown, plain text, or article excerpts here."></textarea>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Content format</span>
+              <select id="ingestContentFormat" class="control">
+                <option value="markdown">Markdown</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="two-up">
+            <label class="field">
+              <span class="field-label">Title</span>
+              <input id="ingestTitle" class="control" type="text" placeholder="Optional title">
+            </label>
+
+            <label class="field">
+              <span class="field-label">Tags</span>
+              <input id="ingestTags" class="control" type="text" placeholder="expert, substack, ai">
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <button id="submitIngestButton" class="btn btn-brew" type="button">Ingest source</button>
+          </div>
+        </section>
+      </div>
+
+      <aside class="sidebar-column" aria-label="Run status and results">
+        <section class="panel status-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-kicker">Run status</div>
+              <h2 class="panel-title">Live execution state</h2>
+            </div>
+            <div class="status-badge" id="runStatusValue">Idle</div>
+          </div>
+          <div class="status-note" id="runStatusNote">Choose a mode and submit a run.</div>
+
+          <div class="output-stack">
+            <div class="output-block">
+              <div class="output-label">Stdout</div>
+              <pre id="runStdout" class="output-pre">No run yet.</pre>
+            </div>
+            <div class="output-block">
+              <div class="output-label">Stderr</div>
+              <pre id="runStderr" class="output-pre">No errors yet.</pre>
+            </div>
+          </div>
+
+          <div class="result-actions" id="resultActions" aria-live="polite"></div>
+        </section>
+
+        <section class="panel recent-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-kicker">Recent runs</div>
+              <h2 class="panel-title">Latest workbench activity</h2>
+            </div>
+          </div>
+          <div class="recent-runs" id="recentRunsList"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>

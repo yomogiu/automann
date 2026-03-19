@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": [
     "paper",
+    "report",
     "concepts",
     "blocks",
     "annotations"
@@ -31,7 +32,7 @@
         },
         "source_url": {
           "type": "string",
-          "format": "uri"
+          "minLength": 1
         },
         "source_kind": {
           "type": "string",
@@ -39,6 +40,101 @@
             "arxiv_html",
             "arxiv_text"
           ]
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_type",
+        "primary_focus",
+        "one_sentence_summary",
+        "executive_summary",
+        "problem_and_scope",
+        "method_and_architecture",
+        "training_and_data",
+        "evaluation_and_evidence",
+        "novelty_and_lineage",
+        "limitations_and_risks",
+        "practical_takeaways",
+        "open_questions"
+      ],
+      "properties": {
+        "document_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_focus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "one_sentence_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executive_summary": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "problem_and_scope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "method_and_architecture": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "training_and_data": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evaluation_and_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "novelty_and_lineage": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limitations_and_risks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "practical_takeaways": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -50,8 +146,7 @@
         "required": [
           "concept_id",
           "name",
-          "summary",
-          "perspectives"
+          "summary"
         ],
         "properties": {
           "concept_id": {
@@ -65,29 +160,6 @@
           "summary": {
             "type": "string",
             "minLength": 1
-          },
-          "perspectives": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "cs50_student",
-              "senior_engineer",
-              "staff_ml_engineer"
-            ],
-            "properties": {
-              "cs50_student": {
-                "type": "string",
-                "minLength": 1
-              },
-              "senior_engineer": {
-                "type": "string",
-                "minLength": 1
-              },
-              "staff_ml_engineer": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
           }
         }
       }
@@ -190,7 +262,8 @@
               "additionalProperties": false,
               "required": [
                 "quote",
-                "reason"
+                "reason",
+                "source_ref"
               ],
               "properties": {
                 "quote": {
@@ -202,7 +275,10 @@
                   "minLength": 1
                 },
                 "source_ref": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }

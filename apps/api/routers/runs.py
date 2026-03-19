@@ -25,6 +25,7 @@ def get_run(
     repository: LifeRepository = Depends(repository_dep),
 ) -> dict:
     row = repository.get_run(run_id)
+    codex_session = repository.get_run_codex_session(run_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     return {
@@ -41,6 +42,7 @@ def get_run(
         "correlation_id": row.correlation_id,
         "idempotency_key": row.idempotency_key,
         "actor": row.actor,
+        "codex_session": codex_session.model_dump(mode="json") if codex_session is not None else None,
         "input_payload": row.input_payload,
         "structured_outputs": row.structured_outputs,
         "artifact_manifest": row.artifact_manifest,

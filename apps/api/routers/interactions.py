@@ -59,13 +59,13 @@ def create_interaction(
 
 
 @router.post("/{interaction_id}/answer")
-def answer_interaction(
+async def answer_interaction(
     interaction_id: str,
     request: InteractionAnswerRequest,
     orchestration: OrchestrationService = Depends(orchestration_dep),
 ) -> dict:
     try:
-        interaction = orchestration.answer_interaction(interaction_id, request)
+        interaction = await orchestration.answer_interaction(interaction_id, request)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Interaction not found: {interaction_id}") from exc
     return {"interaction": interaction.model_dump(mode="json")}

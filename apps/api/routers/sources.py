@@ -121,3 +121,13 @@ def get_source(
             ],
         }
     }
+
+
+@router.delete("/{source_id}")
+def delete_source(
+    source_id: str,
+    repository: LifeRepository = Depends(repository_dep),
+) -> dict:
+    if not repository.delete_source_document(source_id):
+        raise HTTPException(status_code=404, detail=f"Source document not found: {source_id}")
+    return {"id": source_id, "deleted": True}

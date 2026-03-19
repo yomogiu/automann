@@ -270,6 +270,7 @@ class DailyBriefFlowTests(unittest.TestCase):
         self.assertEqual(captured["analysis_request"].news_items, payload["metadata"]["seed_news"])
         self.assertEqual(captured["analysis_request"].papers, payload["metadata"]["seed_arxiv"])
         self.assertEqual(captured["analysis_request"].browser_summary, {"status": "skipped", "reason": "browser_deferred"})
+        self.assertEqual(captured["analysis_request"].brief_metadata, payload["metadata"])
         self.assertIsInstance(captured["publish_request"], PublishRequest)
         self.assertEqual(captured["publish_request"].metadata, {"brief_date": "2026-03-15"})
         self.assertEqual(
@@ -291,6 +292,7 @@ class DailyBriefFlowTests(unittest.TestCase):
         self.assertNotIn("session_id", worker_payloads["news_scrape_runner"])
         self.assertEqual(worker_payloads["arxiv_review_runner"]["seed_arxiv"], payload["metadata"]["seed_arxiv"])
         self.assertEqual(worker_payloads["analysis_runner"]["news_items"], payload["metadata"]["seed_news"])
+        self.assertEqual(worker_payloads["analysis_runner"]["brief_metadata"], payload["metadata"])
         self.assertEqual(worker_payloads["github_publisher"]["metadata"], {"brief_date": "2026-03-15"})
         self.assertNotIn("browser_task_runner", worker_payloads)
 
@@ -406,6 +408,7 @@ class DailyBriefFlowTests(unittest.TestCase):
         self.assertEqual(captured["analysis_request"].news_items, [])
         self.assertEqual(captured["analysis_request"].papers, [])
         self.assertEqual(captured["analysis_request"].browser_summary, {"status": "skipped", "reason": "disabled_by_request"})
+        self.assertEqual(captured["analysis_request"].brief_metadata, payload["metadata"])
         self.assertIsInstance(captured["publish_request"], PublishRequest)
         self.assertEqual(captured["publish_request"].artifact_paths, [])
 

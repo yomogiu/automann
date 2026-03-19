@@ -81,16 +81,19 @@ class CodexCliRunner:
 
     @staticmethod
     def _build_command(request: CodexCliRequest) -> list[str]:
+        extra_args = list(request.extra_args)
+        if "--skip-git-repo-check" not in extra_args:
+            extra_args = ["--skip-git-repo-check", *extra_args]
         if request.structured_mode:
             return [
                 "codex",
                 "exec",
+                *extra_args,
                 "--json",
                 "--output-schema",
                 str(request.output_schema),
                 "-o",
                 str(request.output_path),
-                *request.extra_args,
                 request.prompt,
             ]
-        return ["codex", "exec", request.prompt, *request.extra_args]
+        return ["codex", "exec", *extra_args, request.prompt]

@@ -574,6 +574,24 @@ class RunSubmitRequest(StrictModel):
     idempotency_key: str | None = None
 
 
+class RunCodexSession(StrictModel):
+    codex_thread_id: str | None = None
+    codex_active_turn_id: str | None = None
+    codex_session_key: str | None = None
+    codex_state: str | None = None
+    codex_pending_request_id: str | None = None
+    codex_last_event_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def normalize_codex_session(self) -> RunCodexSession:
+        self.codex_thread_id = str(self.codex_thread_id or "").strip() or None
+        self.codex_active_turn_id = str(self.codex_active_turn_id or "").strip() or None
+        self.codex_session_key = str(self.codex_session_key or "").strip() or None
+        self.codex_state = str(self.codex_state or "").strip() or None
+        self.codex_pending_request_id = str(self.codex_pending_request_id or "").strip() or None
+        return self
+
+
 class RunSummary(StrictModel):
     id: str
     flow_name: str
@@ -584,6 +602,7 @@ class RunSummary(StrictModel):
     parent_run_id: str | None = None
     worker_key: str | None = None
     prefect_flow_run_id: str | None = None
+    codex_session: RunCodexSession | None = None
     output_summary: dict[str, Any] = Field(default_factory=dict)
 
 

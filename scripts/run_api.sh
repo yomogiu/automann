@@ -16,4 +16,5 @@ if [[ -f .env ]]; then
 fi
 
 source .venv/bin/activate
+export PREFECT_API_URL="${LIFE_PREFECT_API_URL:-http://127.0.0.1:4200/api}"
 exec automann-api

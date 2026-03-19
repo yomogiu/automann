@@ -369,6 +369,58 @@ class SQLiteRepositoryTests(unittest.TestCase):
         listed = self.repository.list_source_documents(limit=10)
         self.assertEqual([item.id for item in listed[:2]], [source_b.id, source_a.id])
 
+    def test_delete_source_document_detaches_artifacts(self) -> None:
+        canonical_uri = "file:///knowledge/deletable.md"
+        source_path = self.runtime_root / "deletable.md"
+        source_path.write_text("delete me", encoding="utf-8")
+
+        ingest_run = self.repository.start_run(
+            flow_name="artifact_ingest_flow",
+            worker_key="artifact_ingest_runner",
+            input_payload={"items": [{"input_kind": "file", "file_path": str(source_path)}]},
+            status="running",
+        )
+        persisted = self.repository.persist_adapter_result(
+            ingest_run.id,
+            AdapterResult(
+                status=WorkerStatus.COMPLETED,
+                artifact_manifest=[
+                    ArtifactRecord(
+                        kind="source-text",
+                        path=str(source_path),
+                        storage_uri=source_path.as_uri(),
+                        size_bytes=source_path.stat().st_size,
+                        media_type="text/markdown",
+                        metadata={
+                            "role": "normalized_text",
+                            "input_index": 0,
+                            "canonical_uri": canonical_uri,
+                            "source_type": "markdown",
+                        },
+                    )
+                ],
+                structured_outputs={},
+                observations=[],
+                reports=[],
+            ),
+        )
+        self.assertIsNotNone(persisted)
+        assert persisted is not None
+        artifact = persisted.artifacts[0]
+
+        source = self.repository.upsert_source_document(
+            canonical_uri=canonical_uri,
+            source_type="markdown",
+            title="Deletable",
+            current_text_artifact_id=artifact.id,
+            metadata_json={"tags": ["delete"]},
+        )
+        self.repository.assign_artifact_to_source(artifact.id, source.id)
+
+        self.assertTrue(self.repository.delete_source_document(source.id))
+        self.assertIsNone(self.repository.get_source_document(source.id))
+        self.assertIsNone(self.repository.get_artifact(artifact.id).source_document_id)
+
     def test_report_revision_helpers_promote_and_list_current_series(self) -> None:
         first_run = self.repository.start_run(
             flow_name="research_report_flow",

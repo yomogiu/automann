@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.api.codex_session_service import CodexSessionService
 from libs.config import Settings
 from libs.contracts.models import (
     InteractionAnswerRequest,
@@ -34,11 +35,13 @@ class OrchestrationService:
         repository: LifeRepository,
         retrieval: RetrievalService,
         prefect_client: PrefectOrchestrationClient | None = None,
+        codex_session_service: CodexSessionService | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.retrieval = retrieval
         self.prefect_client = prefect_client or PrefectOrchestrationClient()
+        self.codex_session_service = codex_session_service or CodexSessionService(settings, repository)
 
     def _supports_local_execution(self, flow_name: str, parameters: dict[str, Any] | None = None) -> bool:
         checker = getattr(self.prefect_client, "supports_local_execution", None)
@@ -48,6 +51,9 @@ class OrchestrationService:
             except TypeError:
                 return bool(checker(flow_name))
         return flow_name != "browser_job_flow"
+
+    def _uses_codex_app_server(self, flow_name: str, parameters: dict[str, Any] | None = None) -> bool:
+        return self.codex_session_service.is_interactive_flow(flow_name, parameters or {})
 
     async def submit_flow(
         self,
@@ -88,6 +94,32 @@ class OrchestrationService:
             actor=parameters.get("actor"),
             status="pending",
         )
+
+        if self._uses_codex_app_server(flow_name, parameters):
+            try:
+                result = await self.codex_session_service.submit_run(
+                    run_id=run_record.id,
+                    flow_name=flow_name,
+                    parameters=parameters,
+                )
+                refreshed = self.repository.get_run(run_record.id)
+                codex_session = self.repository.get_run_codex_session(run_record.id)
+                return {
+                    "run_id": run_record.id,
+                    "status": refreshed.status if refreshed is not None else "running",
+                    "mode": "codex-app-server",
+                    "codex_session": codex_session.model_dump(mode="json") if codex_session is not None else None,
+                    "result": result,
+                }
+            except Exception as exc:
+                message = f"Codex app-server submit failed: {exc}"
+                self.repository.update_run_status(run_record.id, status="failed", stderr=message)
+                return {
+                    "run_id": run_record.id,
+                    "status": "failed",
+                    "mode": "codex-app-server-error",
+                    "error": message,
+                }
 
         if self.prefect_client.prefect_available:
             try:
@@ -167,6 +199,7 @@ class OrchestrationService:
                 parent_run_id=row.parent_run_id,
                 worker_key=row.worker_key,
                 prefect_flow_run_id=row.prefect_flow_run_id,
+                codex_session=self.repository.get_run_codex_session(row.id),
                 output_summary=row.structured_outputs or {},
             )
             for row in self.repository.list_runs(limit=limit)
@@ -198,10 +231,18 @@ class OrchestrationService:
         )
         return self._interaction_summary(row)
 
-    def answer_interaction(self, interaction_id: str, request: InteractionAnswerRequest) -> InteractionSummary:
+    async def answer_interaction(self, interaction_id: str, request: InteractionAnswerRequest) -> InteractionSummary:
         row = self.repository.answer_interaction(interaction_id, response=request.response)
         if row is None:
             raise KeyError(interaction_id)
+        if row.ui_hints.get("codex_request_id"):
+            await self.codex_session_service.answer_interaction_request(
+                run_id=row.run_id,
+                ui_hints=row.ui_hints,
+                response=request.response,
+            )
+            refreshed = self.repository.get_interaction(interaction_id)
+            return self._interaction_summary(refreshed or row)
         if row.checkpoint_key == "promote_revision":
             report_id = str(row.ui_hints.get("report_id") or "")
             report_series_id = str(row.ui_hints.get("report_series_id") or "")

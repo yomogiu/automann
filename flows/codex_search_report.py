@@ -13,8 +13,6 @@ from libs.contracts.models import (
     AdapterResult,
     ArtifactIngestRequest,
     ArtifactInputKind,
-    BrowserCapture,
-    BrowserJobRequest,
     ObservationRecord,
     ReportRecord,
     SearchSource,
@@ -182,6 +180,10 @@ def _local_knowledge_enabled(enabled_sources: list[str]) -> bool:
     return "local_knowledge" in {str(item).strip().lower() for item in enabled_sources}
 
 
+def _codex_web_search_enabled(enabled_sources: list[str]) -> bool:
+    return SearchSource.BROWSER_WEB.value in {str(item).strip().lower() for item in enabled_sources}
+
+
 def _status_text(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -211,7 +213,6 @@ def _run_search_ingest_handoff(
         return handoff, observations
 
     from .artifact_ingest import artifact_ingest_flow
-    from .browser_job import browser_job_flow
 
     ingest_request = ArtifactIngestRequest.model_validate(
         {
@@ -302,110 +303,26 @@ def _run_search_ingest_handoff(
     else:
         failed_items = list(source_items)
 
-    browser_enabled = SearchSource.BROWSER_WEB.value in {item.lower() for item in enabled_sources}
-    if not browser_enabled or not failed_items:
+    codex_web_enabled = _codex_web_search_enabled(enabled_sources)
+    if not failed_items:
         return handoff, observations
-
-    for index, item in enumerate(failed_items, start=1):
-        browser_request = BrowserJobRequest.model_validate(
-            {
-                "actor": request.actor,
-                "session_id": request.session_id,
-                "correlation_id": request.correlation_id,
-                "job_name": f"search-report-source-{index}",
-                "target_url": item["url"],
-                "capture": BrowserCapture(html=False, screenshot=False, trace=False).model_dump(mode="json"),
-                "capture_html": False,
-                "capture_screenshots": False,
-                "metadata": {
-                    "source_title": item["title"],
-                    "source_note": item["note"],
-                    "discovered_by": "search_report_browser_fallback",
-                    "parent_run_id": flow_run_id,
-                },
-            }
+    if codex_web_enabled:
+        handoff["warning_codes"] = _merge_warning_codes(
+            handoff["warning_codes"],
+            ["direct_ingest_partial"],
         )
-        handoff["browser_fallback_attempted_count"] += 1
-        try:
-            browser_result = execute_child_flow(
-                flow_name="browser_job_flow",
-                worker_key="browser-process",
-                input_payload=browser_request.model_dump(mode="json"),
-                runner=lambda child_run_id, browser_request=browser_request: browser_job_flow.fn(
-                    request=browser_request.model_dump(mode="json"),
-                    run_id=child_run_id,
-                ),
-                parent_run_id=flow_run_id,
-            )
-            browser_status = _status_text(browser_result.get("status"))
-            browser_outputs = dict(browser_result.get("structured_outputs") or {})
-            ingest_outputs = dict(browser_outputs.get("ingest_handoff") or {})
-            if not ingest_outputs:
-                nested_outputs = browser_outputs.get("structured_outputs")
-                if isinstance(nested_outputs, dict):
-                    ingest_outputs = dict(nested_outputs.get("ingest_handoff") or {})
-            handoff["browser_child_runs"].append(
-                {
-                    "url": item["url"],
-                    "run_id": browser_result.get("run_id"),
-                    "status": browser_status,
-                    "ingest_handoff": ingest_outputs,
-                }
-            )
-            if browser_status == WorkerStatus.COMPLETED.value:
-                handoff["browser_fallback_completed_count"] += 1
-                handoff["source_document_ids"] = list(
-                    dict.fromkeys(
-                        list(handoff["source_document_ids"])
-                        + [str(value) for value in ingest_outputs.get("source_document_ids") or [] if str(value).strip()]
-                    )
-                )
-            else:
-                handoff["browser_fallback_failed_count"] += 1
-                handoff["warning_codes"] = _merge_warning_codes(
-                    handoff["warning_codes"],
-                    ["browser_fallback_failed"],
-                    ingest_outputs,
-                )
-        except Exception as exc:
-            handoff["browser_fallback_failed_count"] += 1
-            handoff["warning_codes"] = _merge_warning_codes(
-                handoff["warning_codes"],
-                ["browser_fallback_failed"],
-            )
-            observations.append(
-                ObservationRecord(
-                    kind="search_report_browser_fallback_failed",
-                    summary=f"Browser fallback failed for {item['url']}.",
-                    payload={"url": item["url"], "error": str(exc)},
-                    confidence=0.55,
-                )
-            )
-
-    if handoff["browser_fallback_attempted_count"]:
         observations.append(
             ObservationRecord(
-                kind="search_report_browser_fallback",
-                summary=(
-                    f"Attempted browser fallback for {handoff['browser_fallback_attempted_count']} discovered "
-                    "sources after direct ingest failures."
-                ),
+                kind="search_report_ingest_handoff_degraded",
+                summary="Direct source ingest failed for some Codex-discovered web sources.",
                 payload={
-                    "attempted_count": handoff["browser_fallback_attempted_count"],
-                    "completed_count": handoff["browser_fallback_completed_count"],
-                    "failed_count": handoff["browser_fallback_failed_count"],
+                    "failed_count": len(failed_items),
+                    "failed_urls": [item["url"] for item in failed_items],
+                    "recovery_mode": "manual_or_explicit_browser_job",
                 },
                 confidence=0.65,
             )
         )
-    remaining_failures = max(
-        0,
-        int(handoff["failed_count"]) - int(handoff["browser_fallback_completed_count"]),
-    )
-    if remaining_failures or handoff["browser_fallback_failed_count"]:
-        handoff["status"] = "degraded"
-    elif handoff["attempted_count"]:
-        handoff["status"] = "completed"
     return handoff, observations
 
 
@@ -631,6 +548,7 @@ def _run_codex_search_report(
     }
     retrieval_query = _build_retrieval_query(request.prompt, search_context_payload)
     local_knowledge_enabled = _local_knowledge_enabled(enabled_sources)
+    codex_web_search_enabled = _codex_web_search_enabled(enabled_sources)
     local_retrieval_context = (
         _local_retrieval_context(repository, prompt=retrieval_query)
         if local_knowledge_enabled
@@ -641,6 +559,7 @@ def _run_codex_search_report(
         "planner_enabled": planner_enabled,
         "max_results_per_query": max_results_per_query,
         "local_knowledge_enabled": local_knowledge_enabled,
+        "codex_web_search_enabled": codex_web_search_enabled,
         "theme": search_context_payload["theme"],
         "query_count": len(search_context_payload["queries"]),
         "local_retrieval_count": len(local_retrieval_context),
@@ -705,7 +624,7 @@ def _run_codex_search_report(
                 "prompt": prompt_text,
                 "cwd": str(Path.cwd()),
                 "resume_session_id": resume_session_id,
-                "enable_search": True,
+                "enable_search": codex_web_search_enabled,
                 "output_path": "codex_last_message.json",
             }
         )

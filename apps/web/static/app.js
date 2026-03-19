@@ -14,7 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindElements();
   bindEvents();
   setTodayDate();
-  void loadArchive();
+  void loadArchive(getQueryParam("report_id"));
 });
 
 function bindElements() {
@@ -56,6 +56,10 @@ function bindEvents() {
       return;
     }
     const reportId = row.dataset.reportId;
+    const report = findReport(reportId);
+    if (report && openReportArtifact(report)) {
+      return;
+    }
     state.selectedId = state.selectedId === reportId ? null : reportId;
     renderReports();
   });
@@ -69,7 +73,7 @@ function setTodayDate() {
   });
 }
 
-async function loadArchive() {
+async function loadArchive(targetReportId = null) {
   state.loading = true;
   renderLoadingState();
   try {
@@ -82,7 +86,14 @@ async function loadArchive() {
     state.filters = taxonomyResponse.filters || [];
     state.tagLabels = Object.fromEntries((taxonomyResponse.tags || []).map((tag) => [tag.key, tag.label]));
     state.activeFilter = availableFilterKeys().includes(state.activeFilter) ? state.activeFilter : "all";
-    state.selectedId = state.reports.some((report) => report.id === state.selectedId) ? state.selectedId : null;
+    state.selectedId = state.reports.some((report) => report.id === targetReportId) ? targetReportId : null;
+
+    if (targetReportId && state.selectedId !== targetReportId) {
+      const report = await loadArchivedReport(targetReportId);
+      if (report) {
+        state.selectedId = report.id;
+      }
+    }
 
     renderFilterBar();
     renderReports();
@@ -93,6 +104,21 @@ async function loadArchive() {
     elements.resultArea.innerHTML = `<div class="error-msg">Could not load taxonomy-backed reports right now. ${escapeHTML(error.message || String(error))}</div>`;
   } finally {
     state.loading = false;
+  }
+}
+
+async function loadArchivedReport(reportId) {
+  try {
+    const payload = await fetchJSON(`/reports/${encodeURIComponent(reportId)}`);
+    const report = payload && typeof payload === "object" ? payload : null;
+    if (!report) {
+      return null;
+    }
+    state.reports = [report, ...state.reports.filter((item) => item.id !== report.id)];
+    return report;
+  } catch (error) {
+    showFlash(`Could not load report ${reportId}: ${error.message || String(error)}`, true);
+    return null;
   }
 }
 
@@ -230,7 +256,7 @@ function renderTagBadges(report) {
 
 function renderReportDetail(report) {
   const artifactAction = report.source_artifact_id
-    ? `<a class="inline-button inline-button-primary" href="/artifacts/${escapeHTML(report.source_artifact_id)}/download" target="_blank" rel="noreferrer">Download source artifact</a>`
+    ? `<a class="inline-button inline-button-primary" href="${escapeHTML(reportDownloadUrl(report))}" target="_blank" rel="noreferrer">Open report in new tab</a>`
     : "";
   const metadata = report.metadata && typeof report.metadata === "object" ? report.metadata : {};
   const presentationMode = String(metadata.presentation_mode || "raw_review");
@@ -265,6 +291,22 @@ function renderReportDetail(report) {
       </div>
     </div>
   `;
+}
+
+function findReport(reportId) {
+  return state.reports.find((report) => report.id === reportId) || null;
+}
+
+function reportDownloadUrl(report) {
+  return `/artifacts/${encodeURIComponent(report.source_artifact_id)}/download`;
+}
+
+function openReportArtifact(report) {
+  if (!report || !report.source_artifact_id) {
+    return false;
+  }
+  window.open(reportDownloadUrl(report), "_blank", "noopener,noreferrer");
+  return true;
 }
 
 function renderAnnotatedPaperBlock(annotatedHtmlArtifactId) {
@@ -319,6 +361,18 @@ function emptyStateMarkup(title, body) {
 function hideFlash() {
   elements.flashMessage.hidden = true;
   elements.flashMessage.textContent = "";
+  elements.flashMessage.classList.remove("is-error");
+}
+
+function showFlash(message, isError = false) {
+  elements.flashMessage.hidden = false;
+  elements.flashMessage.textContent = message;
+  elements.flashMessage.classList.toggle("is-error", Boolean(isError));
+}
+
+function getQueryParam(name) {
+  const value = new URL(window.location.href).searchParams.get(name);
+  return value ? value.trim() : null;
 }
 
 async function fetchJSON(path) {

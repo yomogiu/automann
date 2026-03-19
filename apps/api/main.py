@@ -12,6 +12,7 @@ from libs.db import bootstrap_life_database
 from .routers.automations import router as automations_router
 from .routers.artifacts import router as artifacts_router
 from .routers.commands import router as commands_router
+from .routers.codex_sessions import router as codex_sessions_router
 from .routers.health import router as health_router
 from .routers.interactions import router as interactions_router
 from .routers.reports import router as reports_router
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(web_router)
     app.include_router(health_router)
     app.include_router(commands_router)
+    app.include_router(codex_sessions_router)
     app.include_router(automations_router)
     app.include_router(runs_router)
     app.include_router(reports_router)

@@ -34,6 +34,11 @@ def automations() -> FileResponse:
     return FileResponse(STATIC_DIR / "automations.html")
 
 
+@router.get("/research")
+def research() -> FileResponse:
+    return FileResponse(STATIC_DIR / "research.html")
+
+
 @router.get("/sources")
 def sources() -> FileResponse:
     return FileResponse(STATIC_DIR / "sources.html")

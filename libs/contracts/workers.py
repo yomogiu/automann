@@ -162,6 +162,7 @@ class DailyBriefAnalysisRequest(WorkerContract):
     papers: list[dict[str, Any]] = Field(default_factory=list)
     browser_summary: dict[str, Any] | None = None
     previous_report: dict[str, Any] | None = None
+    brief_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class DailyBriefAnalysisOutput(WorkerContract):
@@ -170,6 +171,9 @@ class DailyBriefAnalysisOutput(WorkerContract):
     paper_count: int
     browser_status: str | None = None
     previous_report_title: str
+    tracked_news_sources: list[str] = Field(default_factory=list)
+    captured_news_sources: list[str] = Field(default_factory=list)
+    analysis_focus: str | None = None
 
 
 class DraftGenerationRequest(WorkerContract):
